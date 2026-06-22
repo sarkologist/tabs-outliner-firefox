@@ -31,7 +31,7 @@ test.describe("sidebar/runtime integration", () => {
     expect(messageTypes(sidebar.protocol(), "page.sendMessage")).not.toContain("getState");
     expect(harness.runtime.sideEffects.slice(sideEffectCount)).toEqual([]);
     await expectNodeVisible(page, "tab:2", "Beta");
-    await expect(page.locator("#state-count")).toContainText("3 items");
+    await expect(page.locator("#state-count")).toHaveText("3 / 2");
     expect(sidebar.issues).toEqual([]);
   });
 

@@ -575,12 +575,9 @@ async function loadLargeSidebar(page: Page, tabCount: number): Promise<void> {
   }, tabCount);
 
   await page.goto("/sidebar/sidebar.html");
-  await expect(page.locator("#state-count")).toHaveText(
-    `${tabCount + 1} items / ${tabCount} open`,
-    {
-      timeout: 60_000
-    }
-  );
+  await expect(page.locator("#state-count")).toHaveText(`${tabCount + 1} / ${tabCount}`, {
+    timeout: 60_000
+  });
   await expect(page.locator(nodeRowSelector("tab:40"))).toBeVisible();
 }
 

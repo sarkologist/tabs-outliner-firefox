@@ -52,7 +52,7 @@ test.describe("sidebar first paint", () => {
 
     await page.goto("/sidebar/sidebar.html");
     await expect(page.locator(".node[data-node-id='tab:1']")).toBeVisible();
-    await expect(page.locator("#state-count")).toHaveText("50001 items / 50000 open");
+    await expect(page.locator("#state-count")).toHaveText("50001 / 50000");
 
     const metrics = await page.evaluate(() => {
       const messages =
@@ -427,7 +427,7 @@ test.describe("sidebar first paint", () => {
 
     await page.goto("/sidebar/sidebar.html");
     await expect(page.locator(".node[data-node-id='group:hidden']")).toBeVisible();
-    await expect(page.locator("#state-count")).toHaveText("103 items / 1 open");
+    await expect(page.locator("#state-count")).toHaveText("103 / 1");
     await expect(page.locator("#export-tree")).toBeHidden();
     await expect(page.locator("#import-tree")).toBeHidden();
     await openToolbarOverflow(page);
@@ -531,7 +531,7 @@ test.describe("sidebar first paint", () => {
       );
     });
     await expect(page.locator(".node[data-node-id='hidden:42']")).toBeVisible();
-    await expect(page.locator("#state-count")).toHaveText("1 match / 103 items");
+    await expect(page.locator("#state-count")).toHaveText("1 / 103");
 
     const searchMetrics = await page.evaluate(() => {
       const messages =
@@ -568,7 +568,7 @@ test.describe("sidebar first paint", () => {
     await expect(page.locator(".node[data-node-id='tab:1']")).toBeVisible();
     await expect(page.locator(".node[data-node-id='group:hidden']")).toBeVisible();
     await expect(page.locator(".node[data-node-id='hidden:42']")).toHaveCount(0);
-    await expect(page.locator("#state-count")).toHaveText("103 items / 1 open");
+    await expect(page.locator("#state-count")).toHaveText("103 / 1");
 
     const clearMetrics = await page.evaluate(() => {
       const messages =
@@ -861,7 +861,7 @@ test.describe("sidebar first paint", () => {
     });
     await expect(page.locator("#search")).toHaveValue("");
     await expect(page.locator(".node[data-node-id='tab\\:1']")).toBeVisible();
-    await expect(page.locator("#state-count")).toHaveText("4 items / 1 open");
+    await expect(page.locator("#state-count")).toHaveText("4 / 1");
 
     const metrics = await page.evaluate(() => {
       const messages =
@@ -992,7 +992,7 @@ test.describe("sidebar first paint", () => {
       return messages.some((message) => message.type === "getTreeProjectionSlice");
     });
 
-    await expect(page.locator("#state-count")).toHaveText("1001 items / 1000 open");
+    await expect(page.locator("#state-count")).toHaveText("1001 / 1000");
     await expect(page.locator(".node")).toHaveCount(256);
 
     const metrics = await page.evaluate(() => {
@@ -1257,7 +1257,7 @@ test.describe("sidebar first paint", () => {
       return typeof fullAppImportEnd === "number" && performance.now() - fullAppImportEnd > 900;
     });
     await expect(page.locator("#search")).toBeEnabled();
-    await expect(page.locator("#state-count")).toHaveText("501 items / 500 open");
+    await expect(page.locator("#state-count")).toHaveText("501 / 500");
 
     const metrics = await page.evaluate(async () => {
       const mark = (name: string) => performance.getEntriesByName(name).at(-1)?.startTime;

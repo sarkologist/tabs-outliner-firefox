@@ -241,14 +241,14 @@ async function loadSidebar(
     options.fullSizeView ? "/sidebar/sidebar.html?view=window" : "/sidebar/sidebar.html"
   );
   await expect(page.locator("#state-count")).toHaveText(
-    `${Object.keys(state.nodes).length} items / ${
+    `${Object.keys(state.nodes).length} / ${
       Object.values(state.nodes).filter(
         (node) =>
           node.kind === "tab" &&
           node.status === "live" &&
           Boolean(node.live && "tabId" in node.live)
       ).length
-    } open`
+    }`
   );
 }
 

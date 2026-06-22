@@ -41,7 +41,12 @@ test.describe("sidebar toolbar layout", () => {
     await page.setViewportSize({ width: 360, height: 520 });
     await page.goto("/sidebar/sidebar.html");
 
-    await expect(page.locator("#state-count")).toHaveText("20964 items / 48 open");
+    await expect(page.locator("#state-count")).toHaveText("20964 / 48");
+    // The toolbar shows just the numbers; the explanatory words live in the hover tooltip.
+    await expect(page.locator("#state-count")).toHaveAttribute(
+      "title",
+      "20964 items · 48 open tabs"
+    );
     await expect(page.locator("header.toolbar h1")).toHaveCount(0);
 
     // The diagnostics line actually loaded and rendered blank -- not merely "not yet loaded".
@@ -51,16 +56,16 @@ test.describe("sidebar toolbar layout", () => {
     const search = page.locator("#search");
     await expect(search).toBeVisible();
 
-    // On the narrow docked sidebar the search keeps a usable width instead of collapsing to a sliver
-    // beside the long item counter, and the counter ellipsizes (clipped) rather than shoving search.
+    // The compact numeric counter fits without clipping even on the narrow docked sidebar, leaving
+    // the search box a usable width.
     const narrowSearch = await search.boundingBox();
     expect(narrowSearch?.width ?? 0).toBeGreaterThan(90);
-    expect(await isClipped(page, "#state-count")).toBe(true);
+    expect(await isClipped(page, "#state-count")).toBe(false);
     await page
       .locator("header.toolbar")
       .screenshot({ path: "test-results/toolbar-narrow-360.png" });
 
-    // On the wide full-size sidebar the search absorbs the slack and the counter is fully visible.
+    // On the wide full-size sidebar the search absorbs the slack and the counter stays fully visible.
     await page.setViewportSize({ width: 900, height: 520 });
     const wideSearch = await search.boundingBox();
     expect(wideSearch?.width ?? 0).toBeGreaterThan(narrowSearch?.width ?? 0);
@@ -76,7 +81,7 @@ test.describe("sidebar toolbar layout", () => {
 
     await page.setViewportSize({ width: 360, height: 520 });
     await page.goto("/sidebar/sidebar.html");
-    await expect(page.locator("#state-count")).toHaveText("20964 items / 48 open");
+    await expect(page.locator("#state-count")).toHaveText("20964 / 48");
 
     // Decluttering the all-clear case must not silence warnings -- this is the data-loss signal.
     await triggerDiagnosticsLoad(page);

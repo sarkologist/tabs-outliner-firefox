@@ -1373,7 +1373,7 @@ test.describe("sidebar projection hunt", () => {
       expect(resultB.stateRequests).toBe(0);
       expect(resultB.searchValue).toBe("Tab 900");
       expect(resultB.visibleRows).toContain(1);
-      expect(resultB.countText).toBe("1 match / 1001 items");
+      expect(resultB.countText).toBe("1 / 1001");
       await expect(nodeRow(pageB, "tab:900")).toBeVisible();
       expect(issuesA).toEqual([]);
       expect(issuesB).toEqual([]);
@@ -1544,9 +1544,9 @@ test.describe("sidebar projection hunt", () => {
       };
     });
 
-    expect(result.before).toBe("1001 items / 1000 open");
-    expect(result.afterAppend).toBe("1002 items / 1001 open");
-    expect(result.afterDelete).toBe("1001 items / 1000 open");
+    expect(result.before).toBe("1001 / 1000");
+    expect(result.afterAppend).toBe("1002 / 1001");
+    expect(result.afterDelete).toBe("1001 / 1000");
     expect(result.requests).toHaveLength(2);
     expect(result.stateRequests).toBe(0);
     expect(issues).toEqual([]);
@@ -1654,7 +1654,7 @@ test.describe("sidebar projection hunt", () => {
       expect(resultB.stateRequests).toBe(0);
       expect(resultB.searchValue).toBe("Tab 900");
       expect(resultB.visibleRows).toContain(1);
-      expect(resultB.countText).toBe("1 match / 1001 items");
+      expect(resultB.countText).toBe("1 / 1001");
       await expect(nodeRow(pageB, "tab:900")).toBeVisible();
       expect(issuesA).toEqual([]);
       expect(issuesB).toEqual([]);
@@ -1913,7 +1913,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.afterStaleScroll.hasScrollRow).toBe(false);
     expect(result.searchValue).toBe("Tab 900");
     expect(result.visibleRows).toContain(1);
-    expect(result.countText).toBe("1 match / 1001 items");
+    expect(result.countText).toBe("1 / 1001");
     await expect(nodeRow(page, "tab:900")).toBeVisible();
     expect(issues).toEqual([]);
   });
@@ -1958,7 +1958,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.requests.slice(2).every((request) => request.query === "")).toBe(true);
     expect(result.commands).toEqual([]);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toMatch(/^100[01] items \/ (999|1000) open$/);
+    expect(result.countText).toMatch(/^100[01] \/ (999|1000)$/);
     expect(result.visibleRows.length).toBeGreaterThan(0);
     expect(result.cutExists).toBe(false);
     expect(result.cutMarkers).toBe(0);
@@ -2032,7 +2032,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.afterStaleScroll.searchValue).toBe("");
     expect(result.afterStaleScroll.targetExists).toBe(false);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.visibleRows.length).toBeGreaterThan(0);
     expect(issues).toEqual([]);
   });
@@ -2445,7 +2445,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.closedWindowExists).toBe(true);
     expect(result.closedTabExists).toBe(true);
     expect(result.undoEnabled).toBe(true);
-    expect(result.countText).toContain("open");
+    expect(result.countText).toBe("4 / 0");
     expect(dialogMessages).toHaveLength(1);
     expect(dialogMessages[0]).toContain("Restore 4 restorable closed nodes");
     expect(issues).toEqual([]);
@@ -2495,7 +2495,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.searchValue).toBe("Closed tab 30");
     expect(result.closedWindowExists).toBe(false);
     expect(result.closedTabExists).toBe(false);
-    expect(result.countText).toBe("0 matches / 3 items");
+    expect(result.countText).toBe("0 / 3");
     expect(issues).toEqual([]);
   });
 
@@ -2583,7 +2583,7 @@ test.describe("sidebar projection hunt", () => {
       expect(resultA.visibleRows).toContain(0);
       expect(resultA.closedWindowExists).toBe(true);
       expect(resultA.closedTabExists).toBe(false);
-      expect(resultA.countText).toBe("3 items / 0 open");
+      expect(resultA.countText).toBe("3 / 0");
 
       expect(resultB.commands).toEqual([{ type: "expandAncestors", nodeId: "tab:900" }]);
       expect(resultB.requests).toContainEqual(
@@ -2858,7 +2858,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.requests[0]?.query).toBe("Tab 900");
     expect(result.requests.slice(1).every((request) => request.query === "")).toBe(true);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.visibleRows.length).toBeGreaterThan(0);
     expect(issues).toEqual([]);
   });
@@ -2898,7 +2898,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.requests).toHaveLength(1);
     expect(result.requests[0]).toMatchObject({ query: "Tab 900" });
     expect(result.searchValue).toBe("Tab 900");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.visibleRows).toContain(800);
     expect(issues.filter((issue) => issue.kind !== "console")).toEqual([]);
   });
@@ -2938,7 +2938,7 @@ test.describe("sidebar projection hunt", () => {
 
     expect(result.requests.map((request) => request.query)).toEqual(["Tab 900", ""]);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.targetExists).toBe(false);
     expect(result.visibleRows.length).toBeGreaterThan(0);
     expect(issues.filter((issue) => issue.kind !== "console")).toEqual([]);
@@ -2993,7 +2993,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.commands).toEqual([{ type: "redo" }]);
     expect(result.requests.map((request) => request.query)).toEqual(["Tab 900", ""]);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.targetExists).toBe(false);
     expect(result.visibleRows.length).toBeGreaterThan(0);
     await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
@@ -3162,7 +3162,7 @@ test.describe("sidebar projection hunt", () => {
       expect.objectContaining({ query: "", targetNodeId: "tab:900" })
     );
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.visibleRows.length).toBeGreaterThan(0);
     expect(result.hasRevealHighlight).toBe(false);
     await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
@@ -3453,7 +3453,7 @@ test.describe("sidebar projection hunt", () => {
 
     expect(result.requests.at(-1)).toMatchObject({ query: "", targetNodeId: "tab:900" });
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.visibleRows).toContain(800);
     expect(result.visibleRows).not.toContain(200);
     expect(result.targetExists).toBe(false);
@@ -3677,7 +3677,7 @@ test.describe("sidebar projection hunt", () => {
       { query: "Tab 91", targetNodeId: undefined }
     ]);
     expect(result.searchValue).toBe("Tab 91");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.visibleRows).toContain(800);
     expect(result.hasRevealHighlight).toBe(false);
     expect(result.hasTab900).toBe(false);
@@ -3758,16 +3758,16 @@ test.describe("sidebar projection hunt", () => {
       { query: "", targetNodeId: undefined }
     ]);
     expect(result.afterStaleTarget.searchValue).toBe("");
-    expect(result.afterStaleTarget.countText).toBe("1001 items / 1000 open");
+    expect(result.afterStaleTarget.countText).toBe("1001 / 1000");
     expect(result.afterStaleTarget.visibleRows).toContain(800);
     expect(result.afterStaleTarget.hasRevealHighlight).toBe(false);
     expect(result.afterStaleTarget.hasTab900).toBe(false);
     expect(result.afterStaleSearch.searchValue).toBe("");
-    expect(result.afterStaleSearch.countText).toBe("1001 items / 1000 open");
+    expect(result.afterStaleSearch.countText).toBe("1001 / 1000");
     expect(result.afterStaleSearch.visibleRows).toContain(800);
     expect(result.afterStaleSearch.hasTab91).toBe(false);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.visibleRows.length).toBeGreaterThan(0);
     expect(result.hasRevealHighlight).toBe(false);
     expect(result.hasTab900).toBe(false);
@@ -3941,7 +3941,7 @@ test.describe("sidebar projection hunt", () => {
       expect(resultB.commands).toEqual([]);
       expect(resultB.requests.map((request) => request.query)).toContain("Tab 91");
       expect(resultB.searchValue).toBe("Tab 91");
-      expect(resultB.countText).toBe("11 matches / 1001 items");
+      expect(resultB.countText).toBe("11 / 1001");
       expect(resultB.visibleRows).toContain(1);
       expect(resultB.tab91Text).toContain("Tab 91 patched from shared background");
       await expect(page.locator(`${nodeSelector("tab:900")}.is-reveal-highlight`)).toBeVisible();
@@ -4020,14 +4020,14 @@ test.describe("sidebar projection hunt", () => {
       expect(resultA.commands).toEqual([]);
       expect(resultA.requests.map((request) => request.query)).toContain("Tab 91");
       expect(resultA.searchValue).toBe("Tab 91");
-      expect(resultA.countText).toBe("11 matches / 1001 items");
+      expect(resultA.countText).toBe("11 / 1001");
       expect(resultA.visibleRows).toContain(1);
       expect(resultA.tab91Text).toContain("Tab 91 patched from shared background");
 
       expect(resultB.commands).toEqual([]);
       expect(resultB.requests.map((request) => request.query)).toEqual([""]);
       expect(resultB.searchValue).toBe("");
-      expect(resultB.countText).toBe("1001 items / 1000 open");
+      expect(resultB.countText).toBe("1001 / 1000");
       expect(resultB.visibleRows).toContain(250);
       expect(resultB.hasTab91).toBe(false);
       await expect(nodeRow(page, "tab:91")).toContainText("Tab 91 patched from shared background");
@@ -4144,7 +4144,7 @@ test.describe("sidebar projection hunt", () => {
       expect(resultA.requests.every((request) => request.query === "Tab 91")).toBe(true);
       expect(resultA.stateRequestCount).toBe(0);
       expect(resultA.searchValue).toBe("Tab 91");
-      expect(resultA.countText).toBe("11 matches / 1001 items");
+      expect(resultA.countText).toBe("11 / 1001");
       expect(resultA.visibleRows).toContain(1);
       expect(resultA.tab91Text).toContain("Tab 91 shared history patched");
       expect(resultA.hasTab900).toBe(false);
@@ -4153,7 +4153,7 @@ test.describe("sidebar projection hunt", () => {
       expect(resultB.requests.every((request) => request.query === "Tab 900")).toBe(true);
       expect(resultB.stateRequestCount).toBe(0);
       expect(resultB.searchValue).toBe("Tab 900");
-      expect(resultB.countText).toBe("1 match / 1001 items");
+      expect(resultB.countText).toBe("1 / 1001");
       expect(resultB.visibleRows).toContain(1);
       expect(resultB.tab900Text).toContain("Tab 900 shared history patched");
       expect(resultB.hasTab91).toBe(false);
@@ -4245,7 +4245,7 @@ test.describe("sidebar projection hunt", () => {
       expect(resultA.requests.map((request) => request.query)).toEqual(["Tab 91", ""]);
       expect(resultA.stateRequestCount).toBe(0);
       expect(resultA.searchValue).toBe("");
-      expect(resultA.countText).toBe("1001 items / 1000 open");
+      expect(resultA.countText).toBe("1001 / 1000");
       expect(resultA.visibleRows.length).toBeGreaterThan(0);
       expect(resultA.hasSearchResult).toBe(false);
       expect(resultA.hasRevealHighlight).toBe(false);
@@ -4254,7 +4254,7 @@ test.describe("sidebar projection hunt", () => {
       expect(resultB.requests.every((request) => request.query === "Tab 900")).toBe(true);
       expect(resultB.stateRequestCount).toBe(0);
       expect(resultB.searchValue).toBe("Tab 900");
-      expect(resultB.countText).toBe("1 match / 1001 items");
+      expect(resultB.countText).toBe("1 / 1001");
       expect(resultB.visibleRows).toContain(1);
       expect(resultB.hasTab900).toBe(true);
       expect(resultB.hasRevealHighlight).toBe(false);
@@ -4401,7 +4401,7 @@ test.describe("sidebar projection hunt", () => {
       expect(resultA.afterStale.hasTab90).toBe(false);
       expect(resultA.afterStale.hasTab900).toBe(false);
       expect(resultA.searchValue).toBe("Tab 91");
-      expect(resultA.countText).toBe("11 matches / 1001 items");
+      expect(resultA.countText).toBe("11 / 1001");
       expect(resultA.visibleRows).toContain(1);
       expect(resultA.hasTab91).toBe(true);
       expect(resultA.hasTab900).toBe(false);
@@ -4410,7 +4410,7 @@ test.describe("sidebar projection hunt", () => {
       expect(resultB.requests.every((request) => request.query === "Tab 900")).toBe(true);
       expect(resultB.stateRequestCount).toBe(0);
       expect(resultB.searchValue).toBe("Tab 900");
-      expect(resultB.countText).toBe("1 match / 1001 items");
+      expect(resultB.countText).toBe("1 / 1001");
       expect(resultB.visibleRows).toContain(1);
       expect(resultB.tab900Text).toContain("Tab 900 independent query patched");
       expect(resultB.hasTab91).toBe(false);
@@ -4504,7 +4504,7 @@ test.describe("sidebar projection hunt", () => {
       expect(resultA.requests.map((request) => request.query)).toEqual(["Tab 900", ""]);
       expect(resultA.stateRequestCount).toBe(0);
       expect(resultA.searchValue).toBe("");
-      expect(resultA.countText).toBe("1001 items / 1000 open");
+      expect(resultA.countText).toBe("1001 / 1000");
       expect(resultA.visibleRows.length).toBeGreaterThan(0);
       expect(resultA.hasTab900).toBe(false);
       expect(resultA.hasRevealHighlight).toBe(false);
@@ -4518,7 +4518,7 @@ test.describe("sidebar projection hunt", () => {
       ).toBe(true);
       expect(resultB.stateRequestCount).toBe(0);
       expect(resultB.searchValue).toBe("");
-      expect(resultB.countText).toBe("1001 items / 1000 open");
+      expect(resultB.countText).toBe("1001 / 1000");
       expect(resultB.visibleRows).toContain(320);
       expect(resultB.hasTab320).toBe(true);
       expect(resultB.hasTab900).toBe(false);
@@ -4606,7 +4606,7 @@ test.describe("sidebar projection hunt", () => {
       ).toBe(true);
       expect(resultA.stateRequestCount).toBe(0);
       expect(resultA.searchValue).toBe("");
-      expect(resultA.countText).toBe("1001 items / 1000 open");
+      expect(resultA.countText).toBe("1001 / 1000");
       expect(resultA.visibleRows).toContain(260);
       expect(resultA.hasTab900).toBe(false);
 
@@ -4619,7 +4619,7 @@ test.describe("sidebar projection hunt", () => {
       ).toBe(true);
       expect(resultB.stateRequestCount).toBe(0);
       expect(resultB.searchValue).toBe("");
-      expect(resultB.countText).toBe("1001 items / 1000 open");
+      expect(resultB.countText).toBe("1001 / 1000");
       expect(resultB.visibleRows).toContain(900);
       expect(resultB.tab900Text).toContain("Tab 900 cross scroll patched");
       await expect(nodeRow(page, "tab:260")).toBeVisible();
@@ -4724,14 +4724,14 @@ test.describe("sidebar projection hunt", () => {
       expect(resultA.commands).toEqual([]);
       expect(resultA.requests.map((request) => request.query)).toEqual(["Tab 91"]);
       expect(resultA.searchValue).toBe("Tab 91");
-      expect(resultA.countText).toBe("11 matches / 1001 items");
+      expect(resultA.countText).toBe("11 / 1001");
       expect(resultA.visibleRows).toContain(1);
       expect(resultA.tab91Text).toContain("Tab 91 temporal patched");
 
       expect(resultB.commands).toEqual([{ type: "undo" }]);
       expect(resultB.requests.map((request) => request.query)).toEqual(["", ""]);
       expect(resultB.searchValue).toBe("");
-      expect(resultB.countText).toBe("1001 items / 1000 open");
+      expect(resultB.countText).toBe("1001 / 1000");
       expect(resultB.afterFirstSlice).toContain(260);
       expect(resultB.visibleRows).toContain(260);
       expect(resultB.hasTab91).toBe(false);
@@ -4815,7 +4815,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.afterStaleTarget.hasRevealHighlight).toBe(false);
     expect(result.finalSearchValue).toBe("Tab 91");
     expect(result.finalVisibleRows).toContain(1);
-    expect(result.countText).toBe("11 matches / 1001 items");
+    expect(result.countText).toBe("11 / 1001");
     await expect(nodeRow(page, "tab:91")).toBeVisible();
     expect(issues).toEqual([]);
   });
@@ -4892,7 +4892,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.afterStaleTarget.hasRevealHighlight).toBe(false);
     expect(result.finalSearchValue).toBe("Tab 91");
     expect(result.finalVisibleRows).toContain(1);
-    expect(result.countText).toBe("11 matches / 1001 items");
+    expect(result.countText).toBe("11 / 1001");
     await expect(nodeRow(page, "tab:91")).toBeVisible();
     expect(issues).toEqual([]);
   });
@@ -4930,7 +4930,7 @@ test.describe("sidebar projection hunt", () => {
 
     expect(result.requests.at(-1)).toMatchObject({ query: "", targetNodeId: "tab:900" });
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.targetExists).toBe(false);
     expect(result.visibleRows.length).toBeGreaterThan(0);
     expect(issues.filter((issue) => issue.kind !== "console")).toEqual([]);
@@ -5017,7 +5017,7 @@ test.describe("sidebar projection hunt", () => {
 
     await expect(page.locator("#search")).toHaveValue("Tab 900");
     await expect(nodeRow(page, "tab:900")).toBeVisible();
-    await expect(page.locator("#state-count")).toHaveText("1 match / 1001 items");
+    await expect(page.locator("#state-count")).toHaveText("1 / 1001");
     expect(issues).toEqual([]);
   });
 
@@ -5081,7 +5081,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.afterBroadcast.countText).not.toContain("Tab 90");
     expect(result.searchValue).toBe("Tab 900");
     expect(result.visibleRows).toContain(1);
-    expect(result.countText).toBe("1 match / 1001 items");
+    expect(result.countText).toBe("1 / 1001");
     await expect(nodeRow(page, "tab:900")).toBeVisible();
     await expect(page.locator(nodeSelector("tab:90"))).toHaveCount(0);
     expect(issues).toEqual([]);
@@ -5164,10 +5164,10 @@ test.describe("sidebar projection hunt", () => {
     expect(result.afterStaleScroll.visibleRows.length).toBeGreaterThan(0);
     expect(result.afterSearch.searchValue).toBe("Tab 900");
     expect(result.afterSearch.hasSearchResult).toBe(true);
-    expect(result.afterSearch.countText).toBe("1 match / 1001 items");
+    expect(result.afterSearch.countText).toBe("1 / 1001");
     expect(result.searchValue).toBe("");
     expect(result.visibleRows.length).toBeGreaterThan(0);
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.targetExists).toBe(false);
     expect(issues).toEqual([]);
   });
@@ -5227,7 +5227,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.searchValue).toBe("Tab 900");
     expect(result.afterStale.hasTab90).toBe(false);
     expect(result.visibleRows).toContain(1);
-    expect(result.countText).toBe("1 match / 1001 items");
+    expect(result.countText).toBe("1 / 1001");
     await expect(nodeRow(page, "tab:900")).toBeVisible();
     await expect(page.locator(nodeSelector("tab:90"))).toHaveCount(0);
     expect(issues).toEqual([]);
@@ -5260,7 +5260,7 @@ test.describe("sidebar projection hunt", () => {
 
     expect(result.requests.map((request) => request.query)).toEqual(["Tab 900"]);
     expect(result.visibleRows).toEqual([]);
-    expect(result.countText).toBe("0 matches / 1001 items");
+    expect(result.countText).toBe("0 / 1001");
     await expect(page.locator(nodeSelector("tab:900"))).toHaveCount(0);
     await expect(page.locator("#search")).toHaveValue("Tab 900");
     expect(issues).toEqual([]);
@@ -5303,7 +5303,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.requests.every((request) => request.query === "Tab 90")).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("Tab 90");
-    expect(result.countText).toBe("10 matches / 1000 items");
+    expect(result.countText).toBe("10 / 1000");
     expect(result.visibleRows).toContain(1);
     expect(result.hasDeletedMatch).toBe(false);
     expect(result.hasRemainingMatch).toBe(true);
@@ -5361,7 +5361,7 @@ test.describe("sidebar projection hunt", () => {
     ]);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.visibleRows).toContain(120);
     expect(result.hasRevealHighlight).toBe(true);
     expect(result.targetText).toContain("Tab 900");
@@ -5419,7 +5419,7 @@ test.describe("sidebar projection hunt", () => {
     ]);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.visibleRows).toContain(900);
 
     const searchRow = nodeRow(page, "tab:900");
@@ -5491,7 +5491,7 @@ test.describe("sidebar projection hunt", () => {
     );
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1000 items / 999 open");
+    expect(result.countText).toBe("1000 / 999");
     expect(result.visibleRows.length).toBeGreaterThan(0);
     expect(result.targetExists).toBe(false);
     expect(result.hasRevealHighlight).toBe(false);
@@ -5554,7 +5554,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.afterStaleSearchRefresh.hasDeletedQueryRow).toBe(false);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.visibleRows.length).toBeGreaterThan(0);
     expect(result.hasDeletedQueryRow).toBe(false);
     expect(result.hasOutlineRow).toBe(true);
@@ -5612,7 +5612,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.afterStaleScroll.hasDeletedRow).toBe(false);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("973 items / 972 open");
+    expect(result.countText).toBe("973 / 972");
     expect(result.visibleRows.length).toBeGreaterThan(0);
     expect(result.visibleRows).toContain(250);
     expect(result.hasDeletedRow).toBe(false);
@@ -5730,7 +5730,7 @@ test.describe("sidebar projection hunt", () => {
       expect(resultA.requests.map((request) => request.query)).toEqual(["Tab 900"]);
       expect(resultA.stateRequestCount).toBe(0);
       expect(resultA.searchValue).toBe("Tab 900");
-      expect(resultA.countText).toBe("1 match / 1001 items");
+      expect(resultA.countText).toBe("1 / 1001");
       expect(resultA.visibleRows).toContain(1);
       expect(resultA.hasTab900).toBe(true);
       expect(resultA.hasTab320).toBe(false);
@@ -5739,7 +5739,7 @@ test.describe("sidebar projection hunt", () => {
       expect(resultB.requests.map((request) => request.query)).toEqual([""]);
       expect(resultB.stateRequestCount).toBe(0);
       expect(resultB.searchValue).toBe("");
-      expect(resultB.countText).toBe("1001 items / 1000 open");
+      expect(resultB.countText).toBe("1001 / 1000");
       expect(resultB.visibleRows).toContain(320);
       expect(resultB.hasTab900).toBe(false);
       expect(resultB.hasTab320).toBe(true);
@@ -5799,7 +5799,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.requests.every((request) => request.query === "Tab 900")).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("Tab 900");
-    expect(result.countText).toBe("1 match / 1001 items");
+    expect(result.countText).toBe("1 / 1001");
     expect(result.visibleRows).toContain(1);
     expect(result.tab900Text).toContain("Tab 900 patched before full broadcast");
     expect(result.hasOutlineRow).toBe(false);
@@ -5843,7 +5843,7 @@ test.describe("sidebar projection hunt", () => {
     );
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.visibleRows.length).toBeGreaterThan(0);
     expect(result.visibleRows).toContain(250);
     expect(result.hasMovedRowAtOldViewport).toBe(false);
@@ -5928,7 +5928,7 @@ test.describe("sidebar projection hunt", () => {
       expect(resultA.requests.every((request) => request.query === "Tab 260")).toBe(true);
       expect(resultA.stateRequestCount).toBe(0);
       expect(resultA.searchValue).toBe("Tab 260");
-      expect(resultA.countText).toBe("1 match / 1001 items");
+      expect(resultA.countText).toBe("1 / 1001");
       expect(resultA.visibleRows).toContain(1);
       expect(resultA.hasSearchRow).toBe(true);
       expect(resultA.hasOutlineNeighbor).toBe(false);
@@ -5937,7 +5937,7 @@ test.describe("sidebar projection hunt", () => {
       expect(resultB.requests.every((request) => request.query === "")).toBe(true);
       expect(resultB.stateRequestCount).toBe(0);
       expect(resultB.searchValue).toBe("");
-      expect(resultB.countText).toBe("1001 items / 1000 open");
+      expect(resultB.countText).toBe("1001 / 1000");
       expect(resultB.visibleRows).toContain(250);
       expect(resultB.hasMovedRowAtOldViewport).toBe(false);
       expect(resultB.hasNeighborRow).toBe(true);
@@ -5991,7 +5991,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.requests.every((request) => request.query === "")).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.visibleRows).toContain(250);
     expect(result.hasMovedRowAtOldViewport).toBe(false);
     expect(result.hasFocusedRow).toBe(true);
@@ -6041,7 +6041,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.requests.map((request) => request.query)).toEqual(["", "Tab 260"]);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("Tab 260");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.visibleRows).toContain(250);
     expect(result.hasMovedRowAtOldViewport).toBe(false);
     expect(result.hasNeighborRow).toBe(true);
@@ -6113,7 +6113,7 @@ test.describe("sidebar projection hunt", () => {
     ).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.visibleRows).toContain(250);
     expect(result.hasMovedRowAtOldViewport).toBe(false);
     expect(result.hasNeighborRow).toBe(true);
@@ -6160,7 +6160,7 @@ test.describe("sidebar projection hunt", () => {
     ).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.visibleRows).toContain(250);
     expect(result.hasMovedRowAtOldViewport).toBe(false);
     expect(result.hasNeighborRow).toBe(true);
@@ -6200,7 +6200,7 @@ test.describe("sidebar projection hunt", () => {
     ).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.visibleRows).toContain(250);
     expect(result.tab260Text).toContain("Tab 260 patched before refill");
     expect(result.hasRevealHighlight).toBe(false);
@@ -6250,7 +6250,7 @@ test.describe("sidebar projection hunt", () => {
     expect(beforeHydration.requests.every((request) => request.query === "Tab 900")).toBe(true);
     expect(beforeHydration.stateRequestCount).toBe(0);
     expect(beforeHydration.searchValue).toBe("Tab 900");
-    expect(beforeHydration.countText).toBe("1 match / 1001 items");
+    expect(beforeHydration.countText).toBe("1 / 1001");
     expect(beforeHydration.visibleRows).toContain(1);
 
     await page.evaluate(async () => {
@@ -6334,7 +6334,7 @@ test.describe("sidebar projection hunt", () => {
     ]);
     expect(beforeHydration.stateRequestCount).toBe(0);
     expect(beforeHydration.searchValue).toBe("");
-    expect(beforeHydration.countText).toBe("1001 items / 1000 open");
+    expect(beforeHydration.countText).toBe("1001 / 1000");
     expect(beforeHydration.visibleRows).toContain(900);
     expect(beforeHydration.hasRevealHighlight).toBe(true);
 
@@ -6411,7 +6411,7 @@ test.describe("sidebar projection hunt", () => {
     ).toBe(true);
     expect(beforeHydration.stateRequestCount).toBe(0);
     expect(beforeHydration.searchValue).toBe("");
-    expect(beforeHydration.countText).toBe("1001 items / 1000 open");
+    expect(beforeHydration.countText).toBe("1001 / 1000");
     expect(beforeHydration.visibleRows).toContain(250);
     expect(beforeHydration.hasRevealHighlight).toBe(false);
 
@@ -6463,7 +6463,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.requests.every((request) => request.query === "Tab 900")).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("Tab 900");
-    expect(result.countText).toBe("1 match / 1001 items");
+    expect(result.countText).toBe("1 / 1001");
     expect(result.visibleRows).toContain(1);
     expect(result.tab900Text).toContain("Tab 900 patched before search response");
     await expect(nodeRow(page, "tab:900")).toContainText("Tab 900 patched before search response");
@@ -6501,7 +6501,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.requests.every((request) => request.query === "Tab 900")).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("Tab 900");
-    expect(result.countText).toBe("1 match / 1001 items");
+    expect(result.countText).toBe("1 / 1001");
     expect(result.visibleRows).toContain(1);
     expect(result.tab900Text).toContain("Tab 900 patched after search response");
     await expect(nodeRow(page, "tab:900")).toContainText("Tab 900 patched after search response");
@@ -6552,7 +6552,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.requests.every((request) => request.query === "Tab 900")).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("Tab 900");
-    expect(result.countText).toBe("1 match / 1001 items");
+    expect(result.countText).toBe("1 / 1001");
     expect(result.visibleRows).toContain(1);
     expect(result.hasRevealHighlight).toBe(false);
     await resultRow.hover();
@@ -6594,7 +6594,7 @@ test.describe("sidebar projection hunt", () => {
     ).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.visibleRows).toContain(250);
     expect(result.tab260Text).toContain("Tab 260 patched while visible");
     expect(result.hasRevealHighlight).toBe(false);
@@ -6641,7 +6641,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.requests.every((request) => request.query === "Tab 900")).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("Tab 900");
-    expect(result.countText).toBe("1 match / 1001 items");
+    expect(result.countText).toBe("1 / 1001");
     expect(result.visibleRows).toContain(1);
     expect(result.tab900Text).toContain("Tab 900 patched before broadcast");
     expect(result.hasOutlineRow).toBe(false);
@@ -6704,7 +6704,7 @@ test.describe("sidebar projection hunt", () => {
     ]);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.visibleRows).toContain(900);
     expect(result.tab900Text).toContain("Tab 900 reveal patched");
     expect(result.hasRevealHighlight).toBe(true);
@@ -6766,7 +6766,7 @@ test.describe("sidebar projection hunt", () => {
     ).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.visibleRows).toContain(250);
     expect(result.tab260Text).toContain("Tab 260 history patched");
     expect(result.hasRevealHighlight).toBe(false);
@@ -6850,7 +6850,7 @@ test.describe("sidebar projection hunt", () => {
       expect(resultA.requests.every((request) => request.query === "Tab 900")).toBe(true);
       expect(resultA.stateRequestCount).toBe(0);
       expect(resultA.searchValue).toBe("Tab 900");
-      expect(resultA.countText).toBe("1 match / 1001 items");
+      expect(resultA.countText).toBe("1 / 1001");
       expect(resultA.visibleRows).toContain(1);
       expect(resultA.tab900Text).toContain("Tab 900 sidebar A patched");
       expect(resultA.hasTab260).toBe(false);
@@ -6864,7 +6864,7 @@ test.describe("sidebar projection hunt", () => {
       ).toBe(true);
       expect(resultB.stateRequestCount).toBe(0);
       expect(resultB.searchValue).toBe("");
-      expect(resultB.countText).toBe("1001 items / 1000 open");
+      expect(resultB.countText).toBe("1001 / 1000");
       expect(resultB.visibleRows).toContain(250);
       expect(resultB.tab260Text).toContain("Tab 260 sidebar B patched");
       expect(resultB.hasTab900).toBe(false);
@@ -6949,7 +6949,7 @@ test.describe("sidebar projection hunt", () => {
     ).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.visibleRows).toContain(250);
     expect(result.tab260Text).toContain("Tab 260 patched before search clear");
     expect(result.hasSearchRow).toBe(false);
@@ -7021,7 +7021,7 @@ test.describe("sidebar projection hunt", () => {
     ).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.visibleRows.length).toBeGreaterThan(0);
     if (result.tab2Text) {
       expect(result.tab2Text).toContain("Tab 2 patched before search clear");
@@ -7059,7 +7059,7 @@ test.describe("sidebar projection hunt", () => {
     ).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.visibleRows).toContain(800);
     expect(result.tab800Text).toContain("Tab 800 patched before full broadcast");
     expect(result.hasRevealHighlight).toBe(false);
@@ -7133,7 +7133,7 @@ test.describe("sidebar projection hunt", () => {
     ).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.visibleRows).toContain(800);
     expect(result.tab800Text).toContain("Tab 800 patched before active clear");
     expect(result.hasSearchRow).toBe(false);
@@ -7232,7 +7232,7 @@ test.describe("sidebar projection hunt", () => {
       ).toBe(true);
       expect(resultA.stateRequestCount).toBe(0);
       expect(resultA.searchValue).toBe("");
-      expect(resultA.countText).toBe("1001 items / 1000 open");
+      expect(resultA.countText).toBe("1001 / 1000");
       expect(resultA.visibleRows).toContain(1);
       expect(resultA.hasSearchRow).toBe(false);
       expect(resultA.hasRevealHighlight).toBe(false);
@@ -7245,7 +7245,7 @@ test.describe("sidebar projection hunt", () => {
       ).toBe(true);
       expect(resultB.stateRequestCount).toBe(0);
       expect(resultB.searchValue).toBe("");
-      expect(resultB.countText).toBe("1001 items / 1000 open");
+      expect(resultB.countText).toBe("1001 / 1000");
       expect(resultB.visibleRows).toContain(250);
       expect(resultB.tab260Text).toContain("Tab 260 other sidebar patched");
       expect(resultB.hasRevealHighlight).toBe(false);
@@ -7298,7 +7298,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.requests).toEqual([]);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.visibleRows).toContain(800);
     expect(result.tab800Text).toContain("Tab 800 active broadcast patched");
     expect(result.hasRevealHighlight).toBe(false);
@@ -7379,7 +7379,7 @@ test.describe("sidebar projection hunt", () => {
       expect(resultA.requests).toEqual([]);
       expect(resultA.stateRequestCount).toBe(0);
       expect(resultA.searchValue).toBe("");
-      expect(resultA.countText).toBe("1001 items / 1000 open");
+      expect(resultA.countText).toBe("1001 / 1000");
       expect(resultA.visibleRows).toContain(800);
       expect(resultA.tab800Text).toContain("Tab 800 sidebar A broadcast patched");
       expect(resultA.hasTab260).toBe(false);
@@ -7393,7 +7393,7 @@ test.describe("sidebar projection hunt", () => {
       ).toBe(true);
       expect(resultB.stateRequestCount).toBe(0);
       expect(resultB.searchValue).toBe("");
-      expect(resultB.countText).toBe("1001 items / 1000 open");
+      expect(resultB.countText).toBe("1001 / 1000");
       expect(resultB.visibleRows).toContain(250);
       expect(resultB.tab260Text).toContain("Tab 260 sidebar B scroll patched");
       expect(resultB.hasTab800).toBe(false);
@@ -7473,13 +7473,13 @@ test.describe("sidebar projection hunt", () => {
     ]);
     expect(result.stateRequestCount).toBe(0);
     expect(result.afterCurrentSearch.searchValue).toBe("Tab 900");
-    expect(result.afterCurrentSearch.countText).toBe("1 match / 1001 items");
+    expect(result.afterCurrentSearch.countText).toBe("1 / 1001");
     expect(result.afterCurrentSearch.visibleRows).toContain(1);
     expect(result.afterCurrentSearch.hasSearchRow).toBe(true);
     expect(result.afterCurrentSearch.hasMovedOutlineRow).toBe(false);
     expect(result.afterCurrentSearch.hasRevealHighlight).toBe(false);
     expect(result.finalSearchValue).toBe("Tab 900");
-    expect(result.finalCountText).toBe("1 match / 1001 items");
+    expect(result.finalCountText).toBe("1 / 1001");
     expect(result.finalVisibleRows).toContain(1);
     expect(result.finalHasSearchRow).toBe(true);
     expect(result.finalHasMovedOutlineRow).toBe(false);
@@ -7558,7 +7558,7 @@ test.describe("sidebar projection hunt", () => {
     ]);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(result.visibleRows).toContain(900);
     expect(result.tab900Text).toContain("Tab 900 reveal history patched");
     expect(result.hasRevealHighlight).toBe(true);
@@ -7696,7 +7696,7 @@ test.describe("sidebar projection hunt", () => {
       ).toBe(true);
       expect(resultA.stateRequestCount).toBe(0);
       expect(resultA.searchValue).toBe("Tab 900");
-      expect(resultA.countText).toMatch(/^0 matches \/ \d+ items$/);
+      expect(resultA.countText).toMatch(/^0 \/ \d+$/);
       expect(resultA.visibleRows).toEqual([]);
       expect(resultA.hasDeletedMatch).toBe(false);
       expect(resultA.hasOutlineRow).toBe(false);
@@ -7710,7 +7710,7 @@ test.describe("sidebar projection hunt", () => {
       ).toBe(true);
       expect(resultB.stateRequestCount).toBe(0);
       expect(resultB.searchValue).toBe("");
-      expect(resultB.countText).toMatch(/^\d+ items \/ \d+ open$/);
+      expect(resultB.countText).toMatch(/^\d+ \/ \d+$/);
       expect(resultB.visibleRows).toContain(250);
       expect(resultB.tab260Text).toContain("Tab 260");
       expect(resultB.hasDeletedMatch).toBe(false);
@@ -7788,7 +7788,7 @@ test.describe("sidebar projection hunt", () => {
     ).toBe(true);
     expect(result.stateRequestCount).toBe(0);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toMatch(/^\d+ items \/ \d+ open$/);
+    expect(result.countText).toMatch(/^\d+ \/ \d+$/);
     expect(result.visibleRows).toContain(900);
     expect(result.hasTarget).toBe(true);
     expect(result.hasDeletedNeighbor).toBe(false);
@@ -8015,7 +8015,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.visibleRows).toContain(0);
     expect(result.closedWindowExists).toBe(true);
     expect(result.closedTabExists).toBe(true);
-    expect(result.countText).toBe("4 items / 0 open");
+    expect(result.countText).toBe("4 / 0");
     await expect(
       nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true })
     ).toBeVisible();
@@ -8066,7 +8066,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.closedWindowExists).toBe(true);
     expect(result.closedTab30Exists).toBe(true);
     expect(result.staleClosedTabExists).toBe(false);
-    expect(result.countText).toBe("4 items / 0 open");
+    expect(result.countText).toBe("4 / 0");
     await expect(
       nodeRow(page, "window:30").getByRole("button", { name: "Restore Closed Window", exact: true })
     ).toBeVisible();
@@ -8296,7 +8296,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.closedWindowExists).toBe(true);
     expect(result.deletedClosedTabExists).toBe(false);
     expect(result.undoEnabled).toBe(true);
-    expect(result.countText).toBe("3 items / 0 open");
+    expect(result.countText).toBe("3 / 0");
     expect(dialogMessages).toEqual([]);
     expect(issues).toEqual([]);
   });
@@ -8340,7 +8340,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.restoredTabExists).toBe(false);
     expect(result.restoredWindowExists).toBe(false);
     expect(result.liveTabText).toContain("Existing tab patched before restored delete");
-    expect(result.countText).toBe("2 items / 1 open");
+    expect(result.countText).toBe("2 / 1");
     await expect(nodeRow(page, "tab:1")).toBeVisible();
     await expect(nodeRow(page, "tab:1")).toContainText(
       "Existing tab patched before restored delete"
@@ -8396,7 +8396,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.visibleRows).toContain(1);
     expect(result.restoredTabExists).toBe(false);
     expect(result.liveTabExists).toBe(true);
-    expect(result.countText).toBe("2 matches / 2 items");
+    expect(result.countText).toBe("2 / 2");
     await expect(nodeRow(page, "tab:1")).toBeVisible();
     await expect(nodeRow(page, "tab:1")).toContainText("Existing tab");
     await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
@@ -8696,7 +8696,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.cutMarkers).toBe(0);
     expect(result.hasTab91).toBe(true);
     expect(result.hasTab90).toBe(false);
-    expect(result.countText).toBe("11 matches / 1001 items");
+    expect(result.countText).toBe("11 / 1001");
     await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
     expect(issues).toEqual([]);
@@ -8751,7 +8751,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.visibleRows).toContain(1);
     expect(result.renameInputs).toBe(0);
     expect(result.hasSearchRow).toBe(true);
-    expect(result.countText).toBe("1 match / 1001 items");
+    expect(result.countText).toBe("1 / 1001");
     expect(issues).toEqual([]);
   });
 
@@ -9267,7 +9267,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.visibleRows).toContain(1);
     expect(result.renameInputs).toBe(0);
     expect(result.hasSearchRow).toBe(true);
-    expect(result.countText).toBe("1 match / 1001 items");
+    expect(result.countText).toBe("1 / 1001");
     expect(issues).toEqual([]);
   });
 
@@ -9320,7 +9320,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.visibleRows).toContain(1);
     expect(result.renameInputs).toBe(0);
     expect(result.hasSearchRow).toBe(true);
-    expect(result.countText).toBe("1 match / 1001 items");
+    expect(result.countText).toBe("1 / 1001");
     expect(issues).toEqual([]);
   });
 
@@ -9387,7 +9387,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.renameInputs).toBe(0);
     expect(result.hasTargetHighlight).toBe(true);
     expect(result.hasSearchRow).toBe(false);
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(issues).toEqual([]);
   });
 
@@ -9457,7 +9457,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.renameInputs).toBe(0);
     expect(result.hasTargetHighlight).toBe(true);
     expect(result.hasSearchRow).toBe(false);
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(issues).toEqual([]);
   });
 
@@ -9495,7 +9495,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.searchValue).toBe("Tab 900");
     expect(result.visibleRows).toContain(1);
     expect(result.hasSearchRow).toBe(true);
-    expect(result.countText).toBe("1 match / 1001 items");
+    expect(result.countText).toBe("1 / 1001");
     expect(issues).toEqual([]);
   });
 
@@ -9535,7 +9535,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.searchValue).toBe("Tab 900");
     expect(result.visibleRows).toContain(1);
     expect(result.hasSearchRow).toBe(true);
-    expect(result.countText).toBe("1 match / 1001 items");
+    expect(result.countText).toBe("1 / 1001");
     expect(issues).toEqual([]);
   });
 
@@ -9592,7 +9592,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.searchValue).toBe("");
     expect(result.visibleRows).toContain(800);
     expect(result.hasSearchRow).toBe(false);
-    expect(result.countText).toBe("1001 items / 1000 open");
+    expect(result.countText).toBe("1001 / 1000");
     expect(issues).toEqual([]);
   });
 
@@ -9633,7 +9633,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.restoredTabExists).toBe(false);
     expect(result.restoredWindowExists).toBe(false);
     expect(result.liveTabExists).toBe(true);
-    expect(result.countText).toBe("2 items / 1 open");
+    expect(result.countText).toBe("2 / 1");
     await expect(nodeRow(page, "tab:1")).toBeVisible();
     await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
     expect(issues).toEqual([]);
@@ -9694,7 +9694,7 @@ test.describe("sidebar projection hunt", () => {
       expect(resultA.visibleRows).toContain(0);
       expect(resultA.restoredTabExists).toBe(false);
       expect(resultA.searchValue).toBe("");
-      expect(resultA.countText).toBe("2 items / 1 open");
+      expect(resultA.countText).toBe("2 / 1");
 
       expect(resultB.commands).toEqual([]);
       expect(resultB.requests).toEqual([
@@ -9704,7 +9704,7 @@ test.describe("sidebar projection hunt", () => {
       expect(resultB.searchValue).toBe("Tab 900");
       expect(resultB.visibleRows).toContain(1);
       expect(resultB.hasSearchRow).toBe(true);
-      expect(resultB.countText).toBe("1 match / 999 items");
+      expect(resultB.countText).toBe("1 / 999");
       expect(issuesA).toEqual([]);
       expect(issuesB).toEqual([]);
     } finally {
@@ -10044,7 +10044,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.searchValue).toBe("Closed tab 30");
     expect(result.visibleRows).toContain(1);
     expect(result.closedTabExists).toBe(true);
-    expect(result.countText).toBe("4 items / 0 open");
+    expect(result.countText).toBe("4 / 0");
     expect(dialogMessages).toHaveLength(1);
     expect(dialogMessages[0]).toContain("Restore 4 restorable closed nodes");
     expect(issues).toEqual([]);
@@ -10121,7 +10121,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.visibleRows).toContain(1);
     expect(result.hasTab91).toBe(true);
     expect(result.hasTab90).toBe(false);
-    expect(result.countText).toBe("11 matches / 1001 items");
+    expect(result.countText).toBe("11 / 1001");
     await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
     await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeDisabled();
     expect(issues).toEqual([]);
@@ -10285,7 +10285,7 @@ test.describe("sidebar projection hunt", () => {
     expect(result.visibleRows).toContain(0);
     expect(result.closedWindowExists).toBe(true);
     expect(result.closedTabExists).toBe(true);
-    expect(result.countText).toBe("4 items / 0 open");
+    expect(result.countText).toBe("4 / 0");
     expect(dialogMessages).toHaveLength(1);
     expect(dialogMessages[0]).toContain("Restore 4 restorable closed nodes");
     expect(issues).toEqual([]);
@@ -11185,13 +11185,13 @@ test.describe("sidebar projection hunt", () => {
         .every((request) => request.query === "" && request.targetNodeId === undefined)
     ).toBe(true);
     expect(result.afterStaleSearch.searchValue).toBe("");
-    expect(result.afterStaleSearch.countText).toBe("6 items / 4 open");
+    expect(result.afterStaleSearch.countText).toBe("6 / 4");
     expect(result.afterStaleSearch.hasHiddenChild50).toBe(false);
     expect(result.afterStaleSearch.hasHiddenChild51).toBe(false);
     expect(result.afterStaleSearch.hasSearchChrome).toBe(false);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("6 items / 4 open");
+    expect(result.countText).toBe("6 / 4");
     expect(result.visibleRows.length).toBeGreaterThan(0);
     expect(result.hasHiddenChild50).toBe(false);
     expect(result.hasHiddenChild51).toBe(false);
@@ -11241,7 +11241,7 @@ test.describe("sidebar projection hunt", () => {
     ]);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("Hidden child");
-    expect(result.countText).toBe("1 match / 6 items");
+    expect(result.countText).toBe("1 / 6");
     expect(result.visibleRows).toContain(2);
     expect(result.hasHiddenChild50).toBe(false);
     expect(result.hasHiddenChild51).toBe(true);
@@ -11301,7 +11301,7 @@ test.describe("sidebar projection hunt", () => {
     ]);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("Hidden child");
-    expect(result.countText).toBe("1 match / 5 items");
+    expect(result.countText).toBe("1 / 5");
     expect(result.visibleRows).toContain(2);
     expect(result.hasHiddenChild50).toBe(false);
     expect(result.hasHiddenChild51).toBe(true);
@@ -11411,7 +11411,7 @@ test.describe("sidebar projection hunt", () => {
     ).toBe(true);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("Hidden child");
-    expect(result.countText).toBe("0 matches / 3 items");
+    expect(result.countText).toBe("0 / 3");
     expect(result.visibleRows).toEqual([]);
     expect(result.hasGroupPath).toBe(false);
     expect(result.hasHiddenChild50).toBe(false);
@@ -11475,7 +11475,7 @@ test.describe("sidebar projection hunt", () => {
     ).toBe(true);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("6 items / 4 open");
+    expect(result.countText).toBe("6 / 4");
     expect(result.visibleRows.length).toBeGreaterThan(0);
     expect(result.hasHiddenChild50).toBe(false);
     expect(result.hasHiddenChild51).toBe(false);
@@ -11635,7 +11635,7 @@ test.describe("sidebar projection hunt", () => {
       ]);
       expect(resultB.stateRequests).toBe(0);
       expect(resultB.searchValue).toBe("Hidden child");
-      expect(resultB.countText).toBe("2 matches / 6 items");
+      expect(resultB.countText).toBe("2 / 6");
       expect(resultB.visibleRows).toContain(2);
       expect(resultB.hasHiddenChild50).toBe(true);
       expect(resultB.hasHiddenChild51).toBe(true);
@@ -11688,7 +11688,7 @@ test.describe("sidebar projection hunt", () => {
       result.requests.every((request) => request.query === "" && request.targetNodeId === undefined)
     ).toBe(true);
     expect(result.stateRequests).toBe(0);
-    expect(result.countText).toBe("5 items / 3 open");
+    expect(result.countText).toBe("5 / 3");
     expect(result.visibleRows).toContain(3);
     expect(result.hasHiddenChild50).toBe(false);
     expect(result.hasHiddenChild51).toBe(true);
@@ -11736,7 +11736,7 @@ test.describe("sidebar projection hunt", () => {
     ]);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("Hidden child");
-    expect(result.countText).toBe("2 matches / 6 items");
+    expect(result.countText).toBe("2 / 6");
     expect(result.visibleRows).toContain(2);
     expect(result.hasHiddenChild50).toBe(true);
     expect(result.hasHiddenChild51).toBe(true);
@@ -11809,7 +11809,7 @@ test.describe("sidebar projection hunt", () => {
     ).toBe(true);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("6 items / 4 open");
+    expect(result.countText).toBe("6 / 4");
     expect(result.visibleRows).toContain(3);
     expect(result.hasHiddenChild50).toBe(true);
     expect(result.hasRevealHighlight).toBe(true);
@@ -11886,7 +11886,7 @@ test.describe("sidebar projection hunt", () => {
     ).toBe(true);
     expect(result.stateRequests).toBe(0);
     expect(result.searchValue).toBe("");
-    expect(result.countText).toBe("6 items / 4 open");
+    expect(result.countText).toBe("6 / 4");
     expect(result.visibleRows).toContain(3);
     expect(result.targetRowIndex).toBe("3");
     expect(result.hasHiddenChild50).toBe(true);

@@ -194,7 +194,7 @@ async function loadSidebar(page: Page): Promise<void> {
   }, fixtureState());
 
   await page.goto("/sidebar/sidebar.html");
-  await expect(page.locator("#state-count")).toHaveText("83 items / 82 open");
+  await expect(page.locator("#state-count")).toHaveText("83 / 82");
 }
 
 async function loadSparseSidebar(page: Page): Promise<void> {

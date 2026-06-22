@@ -2382,13 +2382,15 @@ function revealSidebar(): void {
 
 function updateProjectionChrome(projection: VisibleTreeProjection): void {
   if (stateCount) {
-    const countText = projection.isSearchActive
-      ? `${projection.matchCount} ${pluralize(projection.matchCount, "match")} / ${projection.nodeCount} items`
-      : `${projection.nodeCount} items / ${projection.liveTabCount} open`;
-    stateCount.textContent = countText;
-    // The counter ellipsizes on a narrow toolbar; keep the full value on hover. The hydration hint
-    // takes precedence when we are still backfilling from the sparse snapshot.
-    stateCount.title = hydratingFullState ? "Using sparse background-backed tree" : countText;
+    // Show just the numbers (e.g. "20964 / 48"); the words live in the hover tooltip. In search the
+    // pair is matches / items; otherwise it is total items / open tabs.
+    if (projection.isSearchActive) {
+      stateCount.textContent = `${projection.matchCount} / ${projection.nodeCount}`;
+      stateCount.title = `${projection.matchCount} ${pluralize(projection.matchCount, "match")} · ${projection.nodeCount} ${pluralize(projection.nodeCount, "item")}`;
+    } else {
+      stateCount.textContent = `${projection.nodeCount} / ${projection.liveTabCount}`;
+      stateCount.title = `${projection.nodeCount} ${pluralize(projection.nodeCount, "item")} · ${projection.liveTabCount} open ${pluralize(projection.liveTabCount, "tab")}`;
+    }
   }
 
   if (empty) {
