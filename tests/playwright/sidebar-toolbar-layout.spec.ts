@@ -1,12 +1,106 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+type Diagnostics = {
+  runtimeTabCount: number;
+  liveTabNodeCount: number;
+  visibleLiveTabNodeCount: number;
+  closedTabNodeCount: number;
+  hiddenLiveTabNodeCount: number;
+  missingRuntimeTabIds: number[];
+};
+
+// The outline agrees with the browser: the diagnostics line must render nothing (no "Firefox N").
+const ALL_CLEAR: Diagnostics = {
+  runtimeTabCount: 3,
+  liveTabNodeCount: 3,
+  visibleLiveTabNodeCount: 3,
+  closedTabNodeCount: 0,
+  hiddenLiveTabNodeCount: 0,
+  missingRuntimeTabIds: []
+};
+
+// The browser reports two tabs the outline no longer holds: a data-integrity warning that must stay
+// visible even though the happy path was decluttered.
+const MISSING_TABS: Diagnostics = {
+  runtimeTabCount: 41,
+  liveTabNodeCount: 39,
+  visibleLiveTabNodeCount: 39,
+  closedTabNodeCount: 0,
+  hiddenLiveTabNodeCount: 0,
+  missingRuntimeTabIds: [7, 8]
+};
 
 // Layout-sensitive change: the toolbar dropped the "Tabs" heading and the happy-path "Firefox N"
-// diagnostics line, and now leads with the search box. This drives the real built sidebar so the
-// grid resolution (search vs. counter vs. buttons) is exercised, and captures screenshots at the
-// narrow docked width and the wide full-size width for visual review.
+// diagnostics line, and now leads with the search box. These tests drive the real built sidebar so
+// the grid resolution (search vs. counter vs. buttons) and the diagnostics wiring are exercised, and
+// capture screenshots at the narrow docked width and the wide full-size width for visual review.
 test.describe("sidebar toolbar layout", () => {
-  test("leads with the search box and shows no heading or Firefox line", async ({ page }) => {
-    await page.addInitScript((snapshot) => {
+  test("leads with search; counter ellipsizes narrow and fills wide; no heading or Firefox line", async ({
+    page
+  }) => {
+    const pageErrors = collectPageErrors(page);
+    await installSidebarRuntime(page, ALL_CLEAR);
+
+    await page.setViewportSize({ width: 360, height: 520 });
+    await page.goto("/sidebar/sidebar.html");
+
+    await expect(page.locator("#state-count")).toHaveText("20964 items / 20916 saved");
+    await expect(page.locator("header.toolbar h1")).toHaveCount(0);
+
+    // The diagnostics line actually loaded and rendered blank -- not merely "not yet loaded".
+    await triggerDiagnosticsLoad(page);
+    await expect(page.locator("#diagnostics")).toHaveText("");
+
+    const search = page.locator("#search");
+    await expect(search).toBeVisible();
+
+    // On the narrow docked sidebar the search keeps a usable width instead of collapsing to a sliver
+    // beside the long item counter, and the counter ellipsizes (clipped) rather than shoving search.
+    const narrowSearch = await search.boundingBox();
+    expect(narrowSearch?.width ?? 0).toBeGreaterThan(90);
+    expect(await isClipped(page, "#state-count")).toBe(true);
+    await page
+      .locator("header.toolbar")
+      .screenshot({ path: "test-results/toolbar-narrow-360.png" });
+
+    // On the wide full-size sidebar the search absorbs the slack and the counter is fully visible.
+    await page.setViewportSize({ width: 900, height: 520 });
+    const wideSearch = await search.boundingBox();
+    expect(wideSearch?.width ?? 0).toBeGreaterThan(narrowSearch?.width ?? 0);
+    expect(await isClipped(page, "#state-count")).toBe(false);
+    await page.locator("header.toolbar").screenshot({ path: "test-results/toolbar-wide-900.png" });
+
+    expect(pageErrors).toEqual([]);
+  });
+
+  test("still surfaces the missing-tab data-integrity warning", async ({ page }) => {
+    const pageErrors = collectPageErrors(page);
+    await installSidebarRuntime(page, MISSING_TABS);
+
+    await page.setViewportSize({ width: 360, height: 520 });
+    await page.goto("/sidebar/sidebar.html");
+    await expect(page.locator("#state-count")).toHaveText("20964 items / 20916 saved");
+
+    // Decluttering the all-clear case must not silence warnings -- this is the data-loss signal.
+    await triggerDiagnosticsLoad(page);
+    await expect(page.locator("#diagnostics")).toHaveText("41 live / outline 39 / missing 2");
+    await expect(page.locator("#diagnostics")).not.toContainText("Firefox");
+
+    expect(pageErrors).toEqual([]);
+  });
+});
+
+function collectPageErrors(page: Page): string[] {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(String(error)));
+  return errors;
+}
+
+async function installSidebarRuntime(page: Page, diagnostics: Diagnostics): Promise<void> {
+  await page.addInitScript(
+    ({ snapshot, diagnostics: diagnosticsResult }) => {
+      const messageTypes: string[] = [];
+      (window as typeof window & { __messageTypes?: string[] }).__messageTypes = messageTypes;
       window.browser = {
         runtime: {
           sendMessage: async (message: unknown) => {
@@ -14,6 +108,7 @@ test.describe("sidebar toolbar layout", () => {
               typeof message === "object" && message
                 ? String((message as { type?: unknown }).type)
                 : "";
+            messageTypes.push(type);
             if (type === "getInitialTreeSnapshot") {
               return structuredClone(snapshot);
             }
@@ -21,15 +116,7 @@ test.describe("sidebar toolbar layout", () => {
               return new Promise(() => undefined);
             }
             if (type === "getDiagnostics") {
-              // All-clear: the outline agrees with the browser, so the diagnostics line stays blank.
-              return {
-                runtimeTabCount: 3,
-                liveTabNodeCount: 3,
-                visibleLiveTabNodeCount: 3,
-                closedTabNodeCount: 0,
-                hiddenLiveTabNodeCount: 0,
-                missingRuntimeTabIds: []
-              };
+              return structuredClone(diagnosticsResult);
             }
             return undefined;
           },
@@ -39,32 +126,33 @@ test.describe("sidebar toolbar layout", () => {
           local: { get: async () => ({}), set: async () => undefined }
         }
       };
-    }, toolbarFixtureSnapshot());
+    },
+    { snapshot: toolbarFixtureSnapshot(), diagnostics }
+  );
+}
 
-    await page.setViewportSize({ width: 360, height: 520 });
-    await page.goto("/sidebar/sidebar.html");
+// Dispatching visibilitychange while the document is visible runs the sidebar's scheduleLoad, which
+// round-trips getDiagnostics after its debounce. Awaiting the recorded call makes the subsequent
+// textContent assertion meaningful (the line loaded), not just "still default".
+async function triggerDiagnosticsLoad(page: Page): Promise<void> {
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () =>
+            (window as typeof window & { __messageTypes?: string[] }).__messageTypes?.filter(
+              (type) => type === "getDiagnostics"
+            ).length ?? 0
+        ),
+      { timeout: 9000 }
+    )
+    .toBeGreaterThan(0);
+}
 
-    await expect(page.locator("#state-count")).toHaveText("20964 items / 20916 saved");
-    await expect(page.locator("header.toolbar h1")).toHaveCount(0);
-    await expect(page.locator("#diagnostics")).toHaveText("");
-
-    const header = page.locator("header.toolbar");
-    const search = page.locator("#search");
-    await expect(search).toBeVisible();
-
-    // On the narrow docked sidebar the search box keeps a usable width rather than collapsing to a
-    // sliver beside the long item counter.
-    const narrowSearch = await search.boundingBox();
-    expect(narrowSearch?.width ?? 0).toBeGreaterThan(90);
-    await header.screenshot({ path: "test-results/toolbar-narrow-360.png" });
-
-    // On the wide full-size sidebar the search box absorbs the slack instead of leaving a gap.
-    await page.setViewportSize({ width: 900, height: 520 });
-    const wideSearch = await search.boundingBox();
-    expect(wideSearch?.width ?? 0).toBeGreaterThan(narrowSearch?.width ?? 0);
-    await header.screenshot({ path: "test-results/toolbar-wide-900.png" });
-  });
-});
+async function isClipped(page: Page, selector: string): Promise<boolean> {
+  return page.locator(selector).evaluate((element) => element.scrollWidth > element.clientWidth);
+}
 
 function toolbarFixtureSnapshot() {
   const now = 1_700_000_000_000;
