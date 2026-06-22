@@ -1,33 +1,30 @@
 import { expect, test, type Page } from "@playwright/test";
-
-type Diagnostics = {
-  runtimeTabCount: number;
-  liveTabNodeCount: number;
-  visibleLiveTabNodeCount: number;
-  closedTabNodeCount: number;
-  hiddenLiveTabNodeCount: number;
-  missingRuntimeTabIds: number[];
-};
+import type { OutlineDiagnostics } from "../../src/background/diagnostics";
 
 // The outline agrees with the browser: the diagnostics line must render nothing (no "Firefox N").
-const ALL_CLEAR: Diagnostics = {
+const ALL_CLEAR: OutlineDiagnostics = {
   runtimeTabCount: 3,
   liveTabNodeCount: 3,
   visibleLiveTabNodeCount: 3,
   closedTabNodeCount: 0,
   hiddenLiveTabNodeCount: 0,
-  missingRuntimeTabIds: []
+  missingRuntimeTabIds: [],
+  missingRuntimeTabs: []
 };
 
 // The browser reports two tabs the outline no longer holds: a data-integrity warning that must stay
 // visible even though the happy path was decluttered.
-const MISSING_TABS: Diagnostics = {
+const MISSING_TABS: OutlineDiagnostics = {
   runtimeTabCount: 41,
   liveTabNodeCount: 39,
   visibleLiveTabNodeCount: 39,
   closedTabNodeCount: 0,
   hiddenLiveTabNodeCount: 0,
-  missingRuntimeTabIds: [7, 8]
+  missingRuntimeTabIds: [7, 8],
+  missingRuntimeTabs: [
+    { id: 7, windowId: 1 },
+    { id: 8, windowId: 1 }
+  ]
 };
 
 // Layout-sensitive change: the toolbar dropped the "Tabs" heading and the happy-path "Firefox N"
@@ -96,7 +93,7 @@ function collectPageErrors(page: Page): string[] {
   return errors;
 }
 
-async function installSidebarRuntime(page: Page, diagnostics: Diagnostics): Promise<void> {
+async function installSidebarRuntime(page: Page, diagnostics: OutlineDiagnostics): Promise<void> {
   await page.addInitScript(
     ({ snapshot, diagnostics: diagnosticsResult }) => {
       const messageTypes: string[] = [];

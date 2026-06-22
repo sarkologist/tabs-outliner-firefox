@@ -10,6 +10,7 @@ function diagnostics(overrides: Partial<OutlineDiagnostics> = {}): OutlineDiagno
     closedTabNodeCount: 0,
     hiddenLiveTabNodeCount: 0,
     missingRuntimeTabIds: [],
+    missingRuntimeTabs: [],
     ...overrides
   };
 }
