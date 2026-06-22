@@ -1,6 +1,10 @@
 import type { OutlineState, RuntimeWindow } from "../model/types.js";
 import type { PerformanceTracer } from "../perf/trace.js";
-import { computeDiagnostics, type OutlineDiagnostics } from "./diagnostics.js";
+import {
+  computeDiagnostics,
+  type MissingRuntimeTab,
+  type OutlineDiagnostics
+} from "./diagnostics.js";
 import { getNormalWindows } from "./runtime-snapshot.js";
 
 // Owns the advisory diagnostics readout (a Firefox-vs-outline tab count shown in the
@@ -8,7 +12,10 @@ import { getNormalWindows } from "./runtime-snapshot.js";
 // behavior change) as a Track-B decomposition: a self-contained state slice — the
 // in-flight promise, the last computed result, and the reused runtime-window snapshot —
 // behind a small interface. It only ever *reads* the canonical state (via ensureState);
-// it never mutates the outline, so it is disjoint from the controller's state triad.
+// it never mutates the outline, so it is disjoint from the controller's state triad. Its
+// one side effect is advisory and injected: when the readout finds runtime tabs missing
+// from the outline it forwards them to recordMissingRuntimeTabs (throttled) for the
+// incident log — it still never touches outline state.
 //
 // The cross-cluster reads are injected as callbacks rather than reaching into the
 // controller's closure: ensureState (canonical state), and the scheduler's
@@ -39,6 +46,17 @@ export type DiagnosticsCoordinatorDeps = {
    * real browser window in the Firefox-vs-outline readout. A getter because the set is live.
    */
   excludeWindowIds?: () => ReadonlySet<number>;
+  /**
+   * Record the runtime tabs missing from the outline (a live Firefox tab with no live tab node) so a
+   * "missing N" is identifiable after the fact. Throttled by the coordinator: it fires only when a
+   * tab id not previously seen-missing appears, so a persistently missing tab is logged once per
+   * background worker rather than on every poll (or every cache invalidation). Optional — when
+   * absent the readout is computed without the side effect.
+   */
+  recordMissingRuntimeTabs?: (
+    missing: MissingRuntimeTab[],
+    summary: { runtimeTabCount: number; liveTabNodeCount: number }
+  ) => void;
 };
 
 export type DiagnosticsCoordinator = {
@@ -65,11 +83,18 @@ export function createDiagnosticsCoordinator(
     ensureState,
     waitForSchedulerIdle,
     isHighPrioritySchedulerIdle,
-    excludeWindowIds
+    excludeWindowIds,
+    recordMissingRuntimeTabs
   } = deps;
 
   let diagnosticsInFlight: Promise<OutlineDiagnostics> | undefined;
   let lastDiagnostics: { value: OutlineDiagnostics; atMs: number } | undefined;
+  // Tab ids already reported missing to recordMissingRuntimeTabs. Tracks exactly the
+  // most recent recompute's missing set so a tab is logged once when it first goes missing
+  // (and again only if it resolves and later reappears), not on every poll. Deliberately
+  // NOT cleared by invalidateRuntimeCache: runtime events invalidate the cache constantly,
+  // and re-logging the same persistent missing tab on each would flood the bounded log.
+  let loggedMissingTabIds = new Set<number>();
   // Runtime-window snapshot reused by the readout so getNormalWindows (a browser
   // windows.getAll + tabs.query that cost up to ~2.5s on a large session, and contend with
   // the storage writes a delete triggers) runs only after a real tab/window event changes
@@ -116,6 +141,7 @@ export function createDiagnosticsCoordinator(
           }
         );
         const value = computeDiagnostics(state, windows);
+        maybeRecordMissingRuntimeTabs(value);
         lastDiagnostics = { value, atMs: now() };
         return value;
       })
@@ -123,6 +149,25 @@ export function createDiagnosticsCoordinator(
         diagnosticsInFlight = undefined;
       });
     return diagnosticsInFlight;
+  }
+
+  // Forward newly-missing runtime tabs to the recorder, throttled: log only when the current
+  // missing set contains an id we have not already logged. Updating loggedMissingTabIds to the
+  // exact current set (not a union) lets a tab be logged again if it resolves and later
+  // reappears, while a tab that simply stays missing is logged once.
+  function maybeRecordMissingRuntimeTabs(value: OutlineDiagnostics): void {
+    if (!recordMissingRuntimeTabs) {
+      return;
+    }
+    const currentMissing = value.missingRuntimeTabs;
+    const hasNewlyMissing = currentMissing.some((tab) => !loggedMissingTabIds.has(tab.id));
+    loggedMissingTabIds = new Set(currentMissing.map((tab) => tab.id));
+    if (currentMissing.length > 0 && hasNewlyMissing) {
+      recordMissingRuntimeTabs(currentMissing, {
+        runtimeTabCount: value.runtimeTabCount,
+        liveTabNodeCount: value.liveTabNodeCount
+      });
+    }
   }
 
   return { getReadout, invalidateRuntimeCache, seedRuntimeWindows };

@@ -57,7 +57,13 @@ describe("diagnostics", () => {
       visibleLiveTabNodeCount: 2,
       closedTabNodeCount: 0,
       hiddenLiveTabNodeCount: 0,
-      missingRuntimeTabIds: [3]
+      missingRuntimeTabIds: [3],
+      // The unmatched tab carries its window/url/title so a "missing N" is identifiable
+      // after the fact (the readout is volatile; the coordinator logs these to the
+      // incident log, which a profile export captures).
+      missingRuntimeTabs: [
+        { id: 3, windowId: 10, url: "https://missing.example/", title: "Missing" }
+      ]
     });
   });
 
@@ -77,7 +83,8 @@ describe("diagnostics", () => {
       visibleLiveTabNodeCount: 1,
       closedTabNodeCount: 0,
       hiddenLiveTabNodeCount: 2,
-      missingRuntimeTabIds: []
+      missingRuntimeTabIds: [],
+      missingRuntimeTabs: []
     });
   });
 });

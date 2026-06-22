@@ -4,6 +4,7 @@ import {
   createDiagnosticsCoordinator,
   type DiagnosticsCoordinatorDeps
 } from "./diagnostics-coordinator.js";
+import type { MissingRuntimeTab } from "./diagnostics.js";
 import { createPerformanceTracer } from "../perf/trace.js";
 import { bootstrapFromWindows } from "../model/outline.js";
 import type { RuntimeWindow } from "../model/types.js";
@@ -33,6 +34,12 @@ const RUNTIME_WINDOWS: RuntimeWindow[] = [
     ]
   }
 ];
+
+// An outline that knows about the first runtime tab but not the second, so tab 2 is "missing".
+const ensureStateMissingTab2: DiagnosticsCoordinatorDeps["ensureState"] = async () =>
+  bootstrapFromWindows([{ ...RUNTIME_WINDOWS[0]!, tabs: [RUNTIME_WINDOWS[0]!.tabs![0]!] }], {
+    now: 1000
+  });
 
 type BrowserHits = { getAll: number; query: number };
 
@@ -158,5 +165,60 @@ describe("diagnostics coordinator", () => {
     expect(a).toEqual(b);
     expect(hits.getAll).toBe(1);
     expect(idleWaits()).toBe(1);
+  });
+
+  it("records a missing runtime tab once with its detail, not on every poll", async () => {
+    const calls: Array<{
+      missing: MissingRuntimeTab[];
+      summary: { runtimeTabCount: number; liveTabNodeCount: number };
+    }> = [];
+    const { coordinator, setNow } = createHarness({
+      ensureState: ensureStateMissingTab2,
+      recordMissingRuntimeTabs: (missing, summary) => {
+        calls.push({ missing, summary });
+      }
+    });
+
+    await coordinator.getReadout(); // recompute -> logs the newly missing tab
+    await coordinator.getReadout(); // served from cache -> no recompute, no log
+    setNow(1000 + 1001); // past the TTL
+    await coordinator.getReadout(); // recompute, tab 2 still missing & already logged -> no re-log
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.missing).toEqual([
+      { id: 2, windowId: 10, url: "https://example.com/child", title: "Child" }
+    ]);
+    expect(calls[0]!.summary).toEqual({ runtimeTabCount: 2, liveTabNodeCount: 1 });
+  });
+
+  it("does not record when no runtime tabs are missing", async () => {
+    const calls: MissingRuntimeTab[][] = [];
+    const { coordinator } = createHarness({
+      recordMissingRuntimeTabs: (missing) => {
+        calls.push(missing);
+      }
+    });
+
+    await coordinator.getReadout();
+
+    expect(calls).toHaveLength(0);
+  });
+
+  it("does not re-log a persistent missing tab after invalidateRuntimeCache", async () => {
+    // A runtime event drops the caches on every tab/window change; the missing-tab throttle must
+    // survive that, or a permanently missing tab would be logged on each event and flood the ring.
+    const calls: MissingRuntimeTab[][] = [];
+    const { coordinator } = createHarness({
+      ensureState: ensureStateMissingTab2,
+      recordMissingRuntimeTabs: (missing) => {
+        calls.push(missing);
+      }
+    });
+
+    await coordinator.getReadout(); // logs tab 2
+    coordinator.invalidateRuntimeCache();
+    await coordinator.getReadout(); // recompute, tab 2 still missing -> must NOT re-log
+
+    expect(calls).toHaveLength(1);
   });
 });

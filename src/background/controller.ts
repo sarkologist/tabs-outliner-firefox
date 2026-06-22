@@ -378,6 +378,11 @@ const RUNTIME_REFRESH_BATCH_DELAY_MS = 0;
 // the soak window (01-TARGET-ARCHITECTURE.md section 6).
 const MIGRATION_BACKUP_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const SIDEBAR_PROFILE_COLLECTION_DELAY_MS = 50;
+// Cap the per-tab detail serialized into a single "missingRuntimeTab" incident entry. The
+// common case is 0–1 missing tabs; the cap only bounds a pathological burst (e.g. an entire
+// untracked window) so one bounded entry cannot dominate the ring. missingCount carries the
+// true total, so a truncated list is never silent.
+const MISSING_RUNTIME_TAB_LOG_LIMIT = 25;
 const TOGGLE_SIDEBAR_COMMAND = "toggle-sidebar";
 const SIDEBAR_WINDOW_PATH = "sidebar/sidebar.html";
 const IMPORT_VIEWER_WINDOW_PATH = "viewer/viewer.html";
@@ -507,7 +512,26 @@ export function createBackgroundController(
     ensureState,
     waitForSchedulerIdle,
     isHighPrioritySchedulerIdle,
-    excludeWindowIds: () => fullSizeOutlinerWindowIds
+    excludeWindowIds: () => fullSizeOutlinerWindowIds,
+    // Persist the "missing N" detail (live Firefox tabs with no live outline node) into the
+    // incident log so it survives in a profile export — the live readout shows only ids/count.
+    // Incident detail is flat primitives, so the per-tab list rides as a JSON string; the cap
+    // keeps one entry bounded while missingCount records the true total so truncation is visible.
+    recordMissingRuntimeTabs: (missing, summary) => {
+      void recordIncidentLog("missingRuntimeTab", {
+        runtimeTabCount: summary.runtimeTabCount,
+        liveTabNodeCount: summary.liveTabNodeCount,
+        missingCount: missing.length,
+        missing: JSON.stringify(
+          missing.slice(0, MISSING_RUNTIME_TAB_LOG_LIMIT).map((tab) => ({
+            id: tab.id,
+            windowId: tab.windowId,
+            url: tab.url,
+            title: tab.title
+          }))
+        )
+      });
+    }
   });
 
   const storageMaintenance = createStorageMaintenanceCoordinator({
