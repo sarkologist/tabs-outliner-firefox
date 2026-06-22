@@ -337,6 +337,72 @@ main {
   color: color-mix(in srgb, CanvasText 58%, transparent);
 }
 
+.write-log-change-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.write-log-change-filter[hidden] {
+  display: none;
+}
+
+.write-log-filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px 3px 10px;
+  border: 1px solid color-mix(in srgb, CanvasText 28%, transparent);
+  border-radius: 999px;
+  background: transparent;
+  color: color-mix(in srgb, CanvasText 75%, transparent);
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.write-log-filter-toggle:hover {
+  border-color: color-mix(in srgb, CanvasText 45%, transparent);
+}
+
+.write-log-filter-toggle:focus-visible {
+  outline: 2px solid Highlight;
+  outline-offset: 1px;
+}
+
+/* Enabled (this type is shown). */
+.write-log-filter-toggle[aria-pressed="true"] {
+  border-color: color-mix(in srgb, Highlight 60%, transparent);
+  background: color-mix(in srgb, Highlight 16%, Canvas);
+  color: CanvasText;
+}
+
+/* Disabled (this type is hidden from the list): muted, struck through. */
+.write-log-filter-toggle[aria-pressed="false"] .write-log-filter-label {
+  text-decoration: line-through;
+  color: color-mix(in srgb, CanvasText 55%, transparent);
+}
+
+/* No changes of this type recorded yet. */
+.write-log-filter-toggle.is-empty {
+  opacity: 0.55;
+}
+
+.write-log-filter-count {
+  min-width: 16px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, CanvasText 12%, transparent);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.write-log-filter-toggle[aria-pressed="true"] .write-log-filter-count {
+  background: color-mix(in srgb, Highlight 28%, transparent);
+}
+
 .write-log-change {
   border-left-color: color-mix(in srgb, Highlight 55%, transparent);
 }

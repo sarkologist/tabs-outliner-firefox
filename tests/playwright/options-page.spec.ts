@@ -350,6 +350,174 @@ test.describe("extension options page", () => {
     expect(issues).toEqual([]);
   });
 
+  test("filters the Changes list by change type with per-type toggles", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadOptions(page);
+
+    await setWriteLog(page, {
+      version: 1,
+      entries: [
+        {
+          version: 1,
+          seq: 1,
+          at: "2026-06-20T10:00:00.000Z",
+          kind: "change",
+          ok: true,
+          change: { headline: "Deleted 'Work'", lines: ["'Work'"], overflow: 0, types: ["deleted"] }
+        },
+        {
+          version: 1,
+          seq: 2,
+          at: "2026-06-20T10:00:01.000Z",
+          kind: "change",
+          ok: true,
+          change: { headline: "Renamed 'Old' → 'New'", lines: [], overflow: 0, types: ["renamed"] }
+        },
+        {
+          version: 1,
+          seq: 3,
+          at: "2026-06-20T10:00:02.000Z",
+          kind: "change",
+          ok: true,
+          change: {
+            headline: "Moved 'Gmail' · Renamed 'A' → 'B'",
+            lines: [],
+            overflow: 0,
+            types: ["moved", "renamed"]
+          }
+        }
+      ]
+    });
+    await page.locator("#write-log-refresh").click();
+
+    const changeRows = page.locator("#write-log-changes .write-log-row");
+    await expect(changeRows).toHaveCount(3);
+
+    // The toggle bar shows a button per type, each with its live count.
+    const filter = page.locator("#write-log-change-filter");
+    await expect(filter).toBeVisible();
+    const deletedToggle = filter.locator(".write-log-filter-toggle", { hasText: "Deleted" });
+    const renamedToggle = filter.locator(".write-log-filter-toggle", { hasText: "Renamed" });
+    const movedToggle = filter.locator(".write-log-filter-toggle", { hasText: "Moved" });
+    await expect(deletedToggle).toContainText("1");
+    await expect(renamedToggle).toContainText("2");
+    await expect(deletedToggle).toHaveAttribute("aria-pressed", "true");
+
+    // Turn OFF "Deleted": the deletion row hides; the other two remain.
+    await deletedToggle.click();
+    await expect(deletedToggle).toHaveAttribute("aria-pressed", "false");
+    await expect(changeRows).toHaveCount(2);
+    await expect(page.locator("#write-log-changes")).not.toContainText("Deleted 'Work'");
+
+    // Turn OFF "Renamed" too: the pure-rename row hides, but the moved+renamed row stays — it is
+    // still a move, and a change shows when ANY of its types is enabled.
+    await renamedToggle.click();
+    await expect(changeRows).toHaveCount(1);
+    await expect(changeRows.first()).toContainText("Moved 'Gmail'");
+
+    // Turn OFF "Moved": nothing matches now -> the filtered-empty message (not the "recorded yet" one).
+    await movedToggle.click();
+    await expect(changeRows).toHaveCount(0);
+    await expect(page.locator("#write-log-changes .write-log-empty")).toContainText(
+      "No changes match"
+    );
+
+    // Re-enabling a type brings its rows back.
+    await deletedToggle.click();
+    await expect(changeRows).toHaveCount(1);
+    await expect(changeRows.first()).toContainText("Deleted 'Work'");
+
+    expect(issues).toEqual([]);
+  });
+
+  test("remembers the disabled change types across a reload", async ({ page }) => {
+    const issues = collectPageIssues(page);
+    await loadOptions(page);
+
+    const typedChanges = {
+      version: 1 as const,
+      entries: [
+        {
+          version: 1,
+          seq: 1,
+          at: "2026-06-20T10:00:00.000Z",
+          kind: "change",
+          ok: true,
+          change: { headline: "Deleted 'Work'", lines: [], overflow: 0, types: ["deleted"] }
+        },
+        {
+          version: 1,
+          seq: 2,
+          at: "2026-06-20T10:00:01.000Z",
+          kind: "change",
+          ok: true,
+          change: { headline: "Renamed 'A' → 'B'", lines: [], overflow: 0, types: ["renamed"] }
+        }
+      ]
+    };
+    await setWriteLog(page, typedChanges);
+    await page.locator("#write-log-refresh").click();
+
+    const deletedToggle = page
+      .locator("#write-log-change-filter .write-log-filter-toggle")
+      .filter({ hasText: "Deleted" });
+    await deletedToggle.click();
+    await expect(deletedToggle).toHaveAttribute("aria-pressed", "false");
+    const stored = await page.evaluate(() =>
+      window.localStorage.getItem("tabsOutlinerChangeFilterDisabled:v1")
+    );
+    expect(stored).toContain("deleted");
+
+    // Reload: the mock re-seeds, but the disabled set persists in localStorage and re-applies.
+    await page.reload();
+    await setWriteLog(page, typedChanges);
+    await page.locator("#write-log-refresh").click();
+
+    await expect(
+      page
+        .locator("#write-log-change-filter .write-log-filter-toggle")
+        .filter({ hasText: "Deleted" })
+    ).toHaveAttribute("aria-pressed", "false");
+    await expect(page.locator("#write-log-changes .write-log-row")).toHaveCount(1);
+    await expect(page.locator("#write-log-changes")).not.toContainText("Deleted 'Work'");
+
+    expect(issues).toEqual([]);
+  });
+
+  test("falls back to all change types enabled when the persisted filter is corrupt", async ({
+    page
+  }) => {
+    const issues = collectPageIssues(page);
+    // Seed corrupt persisted state before the page scripts run.
+    await page.addInitScript(() => {
+      window.localStorage.setItem("tabsOutlinerChangeFilterDisabled:v1", "{ not json");
+    });
+    await loadOptions(page);
+
+    await setWriteLog(page, {
+      version: 1,
+      entries: [
+        {
+          version: 1,
+          seq: 1,
+          at: "2026-06-20T10:00:00.000Z",
+          kind: "change",
+          ok: true,
+          change: { headline: "Deleted 'Work'", lines: [], overflow: 0, types: ["deleted"] }
+        }
+      ]
+    });
+    await page.locator("#write-log-refresh").click();
+
+    // No crash; corrupt state is ignored, so every type stays enabled and the row shows.
+    await expect(page.locator("#write-log-changes .write-log-row")).toHaveCount(1);
+    await expect(
+      page.locator("#write-log-change-filter .write-log-filter-toggle[aria-pressed='true']")
+    ).toHaveCount(7);
+
+    expect(issues).toEqual([]);
+  });
+
   test("ignores a stale out-of-order write-log response", async ({ page }) => {
     const issues = collectPageIssues(page);
     await loadOptions(page);

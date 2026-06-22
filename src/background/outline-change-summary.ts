@@ -72,12 +72,68 @@ export type OutlineChangeSummary = {
   reorderedTopLevel: boolean;
 };
 
+// The discrete change categories a single change can span (a node can be moved AND renamed). Drives
+// the per-type filter toggles in the options-page "Changes" list. Order matches the headline render
+// order in renderOutlineChangeSummary. "moved" covers same-parent reorders and the un-attributed
+// top-level reorder too; "other" covers unclassified updates and the bulk-delta overflow count.
+export type OutlineChangeType =
+  | "deleted"
+  | "moved"
+  | "added"
+  | "renamed"
+  | "closed"
+  | "restored"
+  | "other";
+
+// All change types, in display order. Declared via a Record so adding an OutlineChangeType member
+// without listing it here is a compile error; Object.keys preserves declaration order. The single
+// source of truth for the write-log type validation and the options-page filter toggles.
+const OUTLINE_CHANGE_TYPE_PRESENT: Record<OutlineChangeType, true> = {
+  deleted: true,
+  moved: true,
+  added: true,
+  renamed: true,
+  closed: true,
+  restored: true,
+  other: true
+};
+export const OUTLINE_CHANGE_TYPES = Object.keys(OUTLINE_CHANGE_TYPE_PRESENT) as OutlineChangeType[];
+
+// The categories present in a change summary, in headline order. Used to tag each stored change so
+// the options page can filter the Changes list by type.
+export function outlineChangeTypes(summary: OutlineChangeSummary): OutlineChangeType[] {
+  const types: OutlineChangeType[] = [];
+  if (summary.deleted.total > 0) {
+    types.push("deleted");
+  }
+  if (summary.moved.length > 0 || summary.reorderedTopLevel) {
+    types.push("moved");
+  }
+  if (summary.created.total > 0) {
+    types.push("added");
+  }
+  if (summary.renamed.length > 0) {
+    types.push("renamed");
+  }
+  if (summary.statusChanged.some((entry) => entry.to === "closed")) {
+    types.push("closed");
+  }
+  if (summary.statusChanged.some((entry) => entry.to === "restored")) {
+    types.push("restored");
+  }
+  if (summary.updated.length > 0 || summary.otherChanges > 0) {
+    types.push("other");
+  }
+  return types;
+}
+
 // What the write-activity "Changes" list stores per change: a one-line headline plus the full
-// (bounded) list of affected node descriptions.
+// (bounded) list of affected node descriptions, and the discrete categories the change spans.
 export type OutlineChangeDescription = {
   headline: string;
   lines: string[];
   overflow: number;
+  types: OutlineChangeType[];
 };
 
 export function summarizeOutlineDelta(
@@ -329,7 +385,12 @@ export function buildOutlineChangeDescription(
   const maxLines = options.maxLines ?? CHANGE_SUMMARY_DETAIL_LIMIT;
   const allLines = outlineChangeLines(summary);
   const lines = allLines.slice(0, maxLines);
-  return { headline, lines, overflow: Math.max(0, allLines.length - lines.length) };
+  return {
+    headline,
+    lines,
+    overflow: Math.max(0, allLines.length - lines.length),
+    types: outlineChangeTypes(summary)
+  };
 }
 
 // Headline-only convenience (used in tests).
