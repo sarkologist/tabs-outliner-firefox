@@ -82,6 +82,35 @@ export function computeDiagnostics(
   };
 }
 
+// One "missingRuntimeTab" incident-log entry must stay small: the log is a bounded ring and
+// each append rewrites the whole key. So cap the number of tabs serialized AND cap each
+// url/title, so a single pathological value (e.g. a long data: URL) cannot bloat the entry.
+// The recorded missingCount carries the true total and a trailing "…" marks a truncated
+// field, so neither cap is a silent loss.
+export const MISSING_RUNTIME_TAB_LOG_LIMIT = 25;
+const MISSING_RUNTIME_TAB_FIELD_MAX_CHARS = 256;
+
+export function serializeMissingRuntimeTabsForIncidentLog(missing: MissingRuntimeTab[]): string {
+  return JSON.stringify(
+    missing.slice(0, MISSING_RUNTIME_TAB_LOG_LIMIT).map((tab) => {
+      const entry: MissingRuntimeTab = { id: tab.id, windowId: tab.windowId };
+      if (tab.url !== undefined) {
+        entry.url = truncateIncidentField(tab.url);
+      }
+      if (tab.title !== undefined) {
+        entry.title = truncateIncidentField(tab.title);
+      }
+      return entry;
+    })
+  );
+}
+
+function truncateIncidentField(value: string): string {
+  return value.length > MISSING_RUNTIME_TAB_FIELD_MAX_CHARS
+    ? `${value.slice(0, MISSING_RUNTIME_TAB_FIELD_MAX_CHARS)}…`
+    : value;
+}
+
 function countVisibleLiveTabs(state: OutlineState): number {
   let count = 0;
   const visited = new Set<NodeId>();

@@ -45,8 +45,13 @@ type BrowserHits = { getAll: number; query: number };
 
 // A minimal runtime API that records how often the readout reaches the browser. getNormalWindows
 // queries windows.getAll + tabs.query; counting those is exactly the cost the coordinator's caches
-// exist to avoid, so the call counts are the behavioural oracle for this seam.
-function createCountingApi(hits: BrowserHits): DiagnosticsCoordinatorDeps["api"] {
+// exist to avoid, so the call counts are the behavioural oracle for this seam. The in-memory
+// storage.session backs the missing-tab log throttle; passing one store to two coordinators
+// simulates the throttle surviving a background-worker restart.
+function createCountingApi(
+  hits: BrowserHits,
+  sessionStore: Map<string, unknown>
+): DiagnosticsCoordinatorDeps["api"] {
   return {
     windows: {
       getAll: async () => {
@@ -59,17 +64,30 @@ function createCountingApi(hits: BrowserHits): DiagnosticsCoordinatorDeps["api"]
         hits.query += 1;
         return RUNTIME_WINDOWS.flatMap((windowInfo) => windowInfo.tabs ?? []);
       }
+    },
+    storage: {
+      session: {
+        get: async (key: string) => (sessionStore.has(key) ? { [key]: sessionStore.get(key) } : {}),
+        set: async (items: Record<string, unknown>) => {
+          for (const [key, value] of Object.entries(items)) {
+            sessionStore.set(key, value);
+          }
+        }
+      }
     }
   } as unknown as DiagnosticsCoordinatorDeps["api"];
 }
 
-function createHarness(overrides: Partial<DiagnosticsCoordinatorDeps> = {}) {
+function createHarness(
+  overrides: Partial<DiagnosticsCoordinatorDeps> = {},
+  sessionStore: Map<string, unknown> = new Map()
+) {
   const hits: BrowserHits = { getAll: 0, query: 0 };
   let nowMs = 1000;
   let schedulerIdle = true;
   let idleWaits = 0;
   const coordinator = createDiagnosticsCoordinator({
-    api: createCountingApi(hits),
+    api: createCountingApi(hits, sessionStore),
     perfTrace: createPerformanceTracer("background"),
     now: () => nowMs,
     ensureState: async () => bootstrapFromWindows(RUNTIME_WINDOWS, { now: 1000 }),
@@ -82,6 +100,7 @@ function createHarness(overrides: Partial<DiagnosticsCoordinatorDeps> = {}) {
   return {
     coordinator,
     hits,
+    sessionStore,
     idleWaits: () => idleWaits,
     setNow: (value: number) => {
       nowMs = value;
@@ -218,6 +237,33 @@ describe("diagnostics coordinator", () => {
     await coordinator.getReadout(); // logs tab 2
     coordinator.invalidateRuntimeCache();
     await coordinator.getReadout(); // recompute, tab 2 still missing -> must NOT re-log
+
+    expect(calls).toHaveLength(1);
+  });
+
+  it("does not re-log a persistent missing tab across a background-worker restart", async () => {
+    // The throttle is mirrored to storage.session, which outlives the in-memory closure when the
+    // event page is suspended and woken. A fresh coordinator that shares the session store must
+    // see tab 2 as already logged, or every wake would re-log it and flood the bounded ring.
+    const sessionStore = new Map<string, unknown>();
+    const calls: MissingRuntimeTab[][] = [];
+    const recordMissingRuntimeTabs = (missing: MissingRuntimeTab[]) => {
+      calls.push(missing);
+    };
+
+    const firstWorker = createHarness(
+      { ensureState: ensureStateMissingTab2, recordMissingRuntimeTabs },
+      sessionStore
+    );
+    await firstWorker.coordinator.getReadout();
+    expect(calls).toHaveLength(1);
+
+    // Simulate a worker restart: a brand-new coordinator (in-memory state gone) on the same session.
+    const secondWorker = createHarness(
+      { ensureState: ensureStateMissingTab2, recordMissingRuntimeTabs },
+      sessionStore
+    );
+    await secondWorker.coordinator.getReadout();
 
     expect(calls).toHaveLength(1);
   });

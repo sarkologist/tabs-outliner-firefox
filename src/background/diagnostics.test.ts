@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { computeDiagnostics } from "./diagnostics.js";
+import {
+  computeDiagnostics,
+  serializeMissingRuntimeTabsForIncidentLog,
+  MISSING_RUNTIME_TAB_LOG_LIMIT,
+  type MissingRuntimeTab
+} from "./diagnostics.js";
 import { bootstrapFromWindows, moveNode } from "../model/outline.js";
 import type { RuntimeWindow } from "../model/types.js";
 
@@ -86,5 +91,41 @@ describe("diagnostics", () => {
       missingRuntimeTabIds: [],
       missingRuntimeTabs: []
     });
+  });
+});
+
+describe("serializeMissingRuntimeTabsForIncidentLog", () => {
+  it("serializes each tab's id/window/url/title to a JSON string", () => {
+    const missing: MissingRuntimeTab[] = [
+      { id: 7, windowId: 3, url: "https://a.example/", title: "A" },
+      { id: 9, windowId: 3 }
+    ];
+
+    expect(JSON.parse(serializeMissingRuntimeTabsForIncidentLog(missing))).toEqual([
+      { id: 7, windowId: 3, url: "https://a.example/", title: "A" },
+      { id: 9, windowId: 3 }
+    ]);
+  });
+
+  it("caps the number of serialized tabs (true total stays in the separate missingCount)", () => {
+    const missing: MissingRuntimeTab[] = Array.from(
+      { length: MISSING_RUNTIME_TAB_LOG_LIMIT + 5 },
+      (_unused, index) => ({ id: index + 1, windowId: 1 })
+    );
+
+    expect(JSON.parse(serializeMissingRuntimeTabsForIncidentLog(missing))).toHaveLength(
+      MISSING_RUNTIME_TAB_LOG_LIMIT
+    );
+  });
+
+  it("truncates an oversized url/title and marks it with an ellipsis", () => {
+    const longUrl = `https://example.com/${"x".repeat(1000)}`;
+    const [entry] = JSON.parse(
+      serializeMissingRuntimeTabsForIncidentLog([{ id: 1, windowId: 1, url: longUrl, title: "ok" }])
+    ) as Array<{ url: string; title: string }>;
+
+    expect(entry!.url.length).toBeLessThan(longUrl.length);
+    expect(entry!.url.endsWith("…")).toBe(true);
+    expect(entry!.title).toBe("ok");
   });
 });

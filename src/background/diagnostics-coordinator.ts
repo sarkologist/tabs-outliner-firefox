@@ -30,6 +30,11 @@ import { getNormalWindows } from "./runtime-snapshot.js";
 // single background thread's critical path while a command is in flight.
 const DIAGNOSTICS_RESULT_TTL_MS = 1000;
 
+// Ephemeral session key holding the tab ids already reported missing, so the missing-tab log
+// throttle survives the background event page's idle/wake cycles (see loggedMissingTabIds).
+const LOGGED_MISSING_RUNTIME_TAB_IDS_SESSION_KEY =
+  "tabsOutliner:diagnostics:loggedMissingRuntimeTabIds";
+
 export type DiagnosticsCoordinatorDeps = {
   api: WebExtensionBrowser;
   perfTrace: PerformanceTracer;
@@ -89,12 +94,15 @@ export function createDiagnosticsCoordinator(
 
   let diagnosticsInFlight: Promise<OutlineDiagnostics> | undefined;
   let lastDiagnostics: { value: OutlineDiagnostics; atMs: number } | undefined;
-  // Tab ids already reported missing to recordMissingRuntimeTabs. Tracks exactly the
-  // most recent recompute's missing set so a tab is logged once when it first goes missing
-  // (and again only if it resolves and later reappears), not on every poll. Deliberately
-  // NOT cleared by invalidateRuntimeCache: runtime events invalidate the cache constantly,
-  // and re-logging the same persistent missing tab on each would flood the bounded log.
-  let loggedMissingTabIds = new Set<number>();
+  // Tab ids already reported missing to recordMissingRuntimeTabs. A tab is logged once when it
+  // first goes missing (and again only if it resolves and later reappears), not on every poll.
+  // Mirrored to ephemeral storage.session and lazily hydrated from it (memoized promise) so the
+  // throttle survives the background event page's idle/wake cycles: the worker restarts often, and
+  // an in-memory-only set would re-log every persistent missing tab on each wake and flood the
+  // bounded incident ring (session storage resets only on browser restart, where one re-log is
+  // fine). Deliberately NOT cleared by invalidateRuntimeCache — runtime events invalidate the
+  // result cache constantly, and re-logging a persistent missing tab on each would flood the log.
+  let loggedMissingTabIds: Promise<Set<number>> | undefined;
   // Runtime-window snapshot reused by the readout so getNormalWindows (a browser
   // windows.getAll + tabs.query that cost up to ~2.5s on a large session, and contend with
   // the storage writes a delete triggers) runs only after a real tab/window event changes
@@ -141,7 +149,7 @@ export function createDiagnosticsCoordinator(
           }
         );
         const value = computeDiagnostics(state, windows);
-        maybeRecordMissingRuntimeTabs(value);
+        await maybeRecordMissingRuntimeTabs(value);
         lastDiagnostics = { value, atMs: now() };
         return value;
       })
@@ -152,16 +160,20 @@ export function createDiagnosticsCoordinator(
   }
 
   // Forward newly-missing runtime tabs to the recorder, throttled: log only when the current
-  // missing set contains an id we have not already logged. Updating loggedMissingTabIds to the
-  // exact current set (not a union) lets a tab be logged again if it resolves and later
-  // reappears, while a tab that simply stays missing is logged once.
-  function maybeRecordMissingRuntimeTabs(value: OutlineDiagnostics): void {
+  // missing set contains an id not already logged (per the session-persisted set). The tracked
+  // set becomes EXACTLY the current missing ids (not a union), so a tab is logged again if it
+  // resolves and later reappears, while a tab that simply stays missing is logged once.
+  async function maybeRecordMissingRuntimeTabs(value: OutlineDiagnostics): Promise<void> {
     if (!recordMissingRuntimeTabs) {
       return;
     }
+    const logged = await readLoggedMissingTabIds();
     const currentMissing = value.missingRuntimeTabs;
-    const hasNewlyMissing = currentMissing.some((tab) => !loggedMissingTabIds.has(tab.id));
-    loggedMissingTabIds = new Set(currentMissing.map((tab) => tab.id));
+    const hasNewlyMissing = currentMissing.some((tab) => !logged.has(tab.id));
+    const nextLogged = new Set(currentMissing.map((tab) => tab.id));
+    if (!sameIds(logged, nextLogged)) {
+      persistLoggedMissingTabIds(nextLogged);
+    }
     if (currentMissing.length > 0 && hasNewlyMissing) {
       recordMissingRuntimeTabs(currentMissing, {
         runtimeTabCount: value.runtimeTabCount,
@@ -170,5 +182,54 @@ export function createDiagnosticsCoordinator(
     }
   }
 
+  // Lazily hydrate the logged-missing set from storage.session once per worker (memoized), so the
+  // throttle is seeded with what an earlier event-page lifetime already logged. Best-effort: a
+  // missing/disabled session store just starts the set empty (degrades to per-worker throttling).
+  function readLoggedMissingTabIds(): Promise<Set<number>> {
+    loggedMissingTabIds ??= (async () => {
+      const session = api.storage.session;
+      if (!session || typeof session.get !== "function") {
+        return new Set<number>();
+      }
+      try {
+        const stored = await session.get(LOGGED_MISSING_RUNTIME_TAB_IDS_SESSION_KEY);
+        const ids = stored[LOGGED_MISSING_RUNTIME_TAB_IDS_SESSION_KEY];
+        return new Set(
+          Array.isArray(ids) ? ids.filter((id): id is number => typeof id === "number") : []
+        );
+      } catch {
+        return new Set<number>();
+      }
+    })();
+    return loggedMissingTabIds;
+  }
+
+  function persistLoggedMissingTabIds(ids: Set<number>): void {
+    loggedMissingTabIds = Promise.resolve(ids);
+    const session = api.storage.session;
+    if (!session || typeof session.set !== "function") {
+      return;
+    }
+    try {
+      void session
+        .set({ [LOGGED_MISSING_RUNTIME_TAB_IDS_SESSION_KEY]: [...ids] })
+        .catch(() => undefined);
+    } catch {
+      // Best-effort: the session mirror only narrows re-logging; losing it never breaks the readout.
+    }
+  }
+
   return { getReadout, invalidateRuntimeCache, seedRuntimeWindows };
+}
+
+function sameIds(a: ReadonlySet<number>, b: ReadonlySet<number>): boolean {
+  if (a.size !== b.size) {
+    return false;
+  }
+  for (const id of b) {
+    if (!a.has(id)) {
+      return false;
+    }
+  }
+  return true;
 }
