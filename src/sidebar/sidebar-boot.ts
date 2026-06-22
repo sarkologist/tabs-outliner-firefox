@@ -60,8 +60,11 @@ function renderInitialSnapshot(snapshot: InitialTreeSnapshot): void {
   tree.append(fragment);
 
   if (stateCount) {
-    stateCount.textContent = `${snapshot.projection.nodeCount} items / ${snapshot.projection.closedCount} saved`;
-    stateCount.title = snapshot.hydrating ? "Using sparse background-backed tree" : "";
+    const countText = `${snapshot.projection.nodeCount} items / ${snapshot.projection.closedCount} saved`;
+    stateCount.textContent = countText;
+    // Keep the full counter value on hover (it ellipsizes on a narrow toolbar); the hydration hint
+    // wins while the sparse boot snapshot is still being backfilled.
+    stateCount.title = snapshot.hydrating ? "Using sparse background-backed tree" : countText;
   }
   if (empty) {
     empty.hidden = snapshot.projection.rows.length > 0;

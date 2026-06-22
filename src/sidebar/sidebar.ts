@@ -2382,10 +2382,13 @@ function revealSidebar(): void {
 
 function updateProjectionChrome(projection: VisibleTreeProjection): void {
   if (stateCount) {
-    stateCount.textContent = projection.isSearchActive
+    const countText = projection.isSearchActive
       ? `${projection.matchCount} ${pluralize(projection.matchCount, "match")} / ${projection.nodeCount} items`
       : `${projection.nodeCount} items / ${projection.closedCount} saved`;
-    stateCount.title = hydratingFullState ? "Using sparse background-backed tree" : "";
+    stateCount.textContent = countText;
+    // The counter ellipsizes on a narrow toolbar; keep the full value on hover. The hydration hint
+    // takes precedence when we are still backfilling from the sparse snapshot.
+    stateCount.title = hydratingFullState ? "Using sparse background-backed tree" : countText;
   }
 
   if (empty) {

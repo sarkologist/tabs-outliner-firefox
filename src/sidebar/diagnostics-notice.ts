@@ -112,15 +112,21 @@ export function createDiagnosticsNotice(deps: DiagnosticsNoticeDeps): Diagnostic
     });
   }
 
-  function diagnosticsText(result: OutlineDiagnostics): string {
-    if (result.missingRuntimeTabIds.length > 0) {
-      return `Firefox ${result.runtimeTabCount} / outline ${result.liveTabNodeCount} / missing ${result.missingRuntimeTabIds.length}`;
-    }
-    if (result.hiddenLiveTabNodeCount > 0) {
-      return `Firefox ${result.runtimeTabCount} / visible ${result.visibleLiveTabNodeCount}`;
-    }
-    return `Firefox ${result.runtimeTabCount}`;
-  }
-
   return { show, scheduleLoad };
+}
+
+// The diagnostics line is a health/warning channel, not a status readout: it surfaces only when the
+// outline disagrees with what the browser reports (live tabs the outline is missing, or live tab
+// nodes hidden from the visible tree). The all-clear case returns "" so the happy path shows nothing
+// rather than a redundant live-tab count -- the item counter already conveys size, and a blank line
+// reclaims toolbar space. Warnings are kept verbatim because a non-empty diagnostics line means
+// "look here".
+export function diagnosticsText(result: OutlineDiagnostics): string {
+  if (result.missingRuntimeTabIds.length > 0) {
+    return `${result.runtimeTabCount} live / outline ${result.liveTabNodeCount} / missing ${result.missingRuntimeTabIds.length}`;
+  }
+  if (result.hiddenLiveTabNodeCount > 0) {
+    return `${result.runtimeTabCount} live / visible ${result.visibleLiveTabNodeCount}`;
+  }
+  return "";
 }
