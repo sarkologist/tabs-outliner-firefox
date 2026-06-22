@@ -59,6 +59,39 @@ describe("createWriteLog", () => {
     });
   });
 
+  it("records the change types and round-trips them through hydrate, dropping unknown types", () => {
+    const log = createWriteLog({ now });
+    log.recordChange({
+      headline: "Moved 'Gmail' · Renamed 'Old' → 'New'",
+      lines: ["'Gmail'"],
+      types: ["moved", "renamed"]
+    });
+    expect(log.snapshot().entries[0]?.change?.types).toEqual(["moved", "renamed"]);
+
+    // A hydrated snapshot keeps recognized types and drops junk (corrupted data); a pre-types row
+    // (no `types` field) hydrates to an empty list.
+    const restored = normalizeWriteLogEntries([
+      {
+        version: 1,
+        seq: 1,
+        at: "2026-06-20T00:00:00.000Z",
+        kind: "change",
+        ok: true,
+        change: { headline: "X", lines: [], overflow: 0, types: ["deleted", "bogus", "moved"] }
+      },
+      {
+        version: 1,
+        seq: 2,
+        at: "2026-06-20T00:00:01.000Z",
+        kind: "change",
+        ok: true,
+        change: { headline: "Y", lines: [], overflow: 0 }
+      }
+    ]);
+    expect(restored[0]?.change?.types).toEqual(["deleted", "moved"]);
+    expect(restored[1]?.change?.types).toEqual([]);
+  });
+
   it("drops undefined detail values and omits empty detail", () => {
     const log = createWriteLog({ now });
     log.record({ kind: "bootSnapshot", ok: true, detail: { message: undefined } });
@@ -260,7 +293,8 @@ describe("describeWriteLogEntry", () => {
       change: {
         headline: "Deleted 'Work' (window) (+12 descendants)",
         lines: ["'Work' (window)", "'Gmail'"],
-        overflow: 0
+        overflow: 0,
+        types: ["deleted"]
       }
     };
     expect(describeWriteLogEntry(changeEntry).title).toBe(

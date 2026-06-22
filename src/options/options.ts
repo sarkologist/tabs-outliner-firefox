@@ -37,10 +37,15 @@ import {
   describeWriteLogEntry,
   normalizeWriteLogEntries,
   summarizeWriteLog,
+  type WriteLogChange,
   type WriteLogEntry,
   type WriteLogHealth,
   type WriteLogSeverity
 } from "../background/write-log.js";
+import {
+  OUTLINE_CHANGE_TYPES,
+  type OutlineChangeType
+} from "../background/outline-change-summary.js";
 
 const TOGGLE_SIDEBAR_COMMAND = "toggle-sidebar";
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -108,8 +113,25 @@ const writeLogStorageList = document.querySelector<HTMLOListElement>("#write-log
 const writeLogRefresh = document.querySelector<HTMLButtonElement>("#write-log-refresh");
 const writeLogClear = document.querySelector<HTMLButtonElement>("#write-log-clear");
 const writeLogLive = document.querySelector<HTMLInputElement>("#write-log-live");
+const writeLogChangeFilter = document.querySelector<HTMLElement>("#write-log-change-filter");
 
 const WRITE_LOG_POLL_INTERVAL_MS = 1500;
+
+// User-facing labels for the per-type Changes filter toggles (keyed exhaustively by change type).
+const CHANGE_TYPE_LABELS: Record<OutlineChangeType, string> = {
+  deleted: "Deleted",
+  moved: "Moved",
+  added: "Added",
+  renamed: "Renamed",
+  closed: "Closed",
+  restored: "Restored",
+  other: "Other"
+};
+// Persist the user's filter as the set of DISABLED types (stored, not enabled): a change type added
+// in a later version then defaults to visible rather than silently hidden. Per-browser via
+// localStorage (the panel is session-scoped UI; nothing here touches the extension's tab data).
+const CHANGE_FILTER_STORAGE_KEY = "tabsOutlinerChangeFilterDisabled:v1";
+const disabledChangeTypes = loadDisabledChangeTypes();
 
 type RecordingTarget =
   | {
@@ -778,8 +800,96 @@ function renderWriteLog(entries: WriteLogEntry[]): void {
   // Two separate lists: domain-level changes vs storage-diagnostic events.
   const changes = entries.filter((entry) => entry.kind === "change");
   const storage = entries.filter((entry) => entry.kind !== "change");
-  renderWriteLogList(writeLogChangesList, changes, "No changes recorded yet.", writeLogChangeRow);
+  renderChangeFilter(changes);
+  const visibleChanges = changes.filter((entry) => changeMatchesFilter(entry.change));
+  const changesEmptyText =
+    changes.length === 0 ? "No changes recorded yet." : "No changes match the selected types.";
+  renderWriteLogList(writeLogChangesList, visibleChanges, changesEmptyText, writeLogChangeRow);
   renderWriteLogList(writeLogStorageList, storage, "No storage activity yet.", writeLogRow);
+}
+
+function loadDisabledChangeTypes(): Set<OutlineChangeType> {
+  try {
+    const raw = window.localStorage.getItem(CHANGE_FILTER_STORAGE_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) {
+      return new Set();
+    }
+    return new Set(
+      parsed.filter((type): type is OutlineChangeType =>
+        OUTLINE_CHANGE_TYPES.includes(type as OutlineChangeType)
+      )
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function persistDisabledChangeTypes(): void {
+  try {
+    window.localStorage.setItem(
+      CHANGE_FILTER_STORAGE_KEY,
+      JSON.stringify([...disabledChangeTypes])
+    );
+  } catch {
+    // Best-effort: a private-mode storage failure just means the filter is not remembered.
+  }
+}
+
+// A change is shown when any of its categories is enabled. An uncategorized change (e.g. a row
+// hydrated from a pre-types session) has no type to match, so it is always shown.
+function changeMatchesFilter(change: WriteLogChange | undefined): boolean {
+  const types = change?.types ?? [];
+  if (types.length === 0) {
+    return true;
+  }
+  return types.some((type) => !disabledChangeTypes.has(type));
+}
+
+// One toggle button per change type, labelled with its current count, pressed when the type is
+// shown. Rebuilt on each render so the counts track the live log.
+function renderChangeFilter(changes: WriteLogEntry[]): void {
+  if (!writeLogChangeFilter) {
+    return;
+  }
+  // Nothing to filter yet: keep the toggle bar out of the way until the first change lands.
+  writeLogChangeFilter.hidden = changes.length === 0;
+  const counts = new Map<OutlineChangeType, number>();
+  for (const entry of changes) {
+    for (const type of entry.change?.types ?? []) {
+      counts.set(type, (counts.get(type) ?? 0) + 1);
+    }
+  }
+  writeLogChangeFilter.replaceChildren(
+    ...OUTLINE_CHANGE_TYPES.map((type) => {
+      const enabled = !disabledChangeTypes.has(type);
+      const count = counts.get(type) ?? 0;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "write-log-filter-toggle";
+      button.setAttribute("aria-pressed", String(enabled));
+      button.classList.toggle("is-empty", count === 0);
+
+      const label = document.createElement("span");
+      label.className = "write-log-filter-label";
+      label.textContent = CHANGE_TYPE_LABELS[type];
+      const countEl = document.createElement("span");
+      countEl.className = "write-log-filter-count";
+      countEl.textContent = String(count);
+      button.append(label, countEl);
+
+      button.addEventListener("click", () => {
+        if (disabledChangeTypes.has(type)) {
+          disabledChangeTypes.delete(type);
+        } else {
+          disabledChangeTypes.add(type);
+        }
+        persistDisabledChangeTypes();
+        renderWriteLog(writeLogEntries);
+      });
+      return button;
+    })
+  );
 }
 
 function renderWriteLogList(

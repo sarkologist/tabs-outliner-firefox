@@ -1,3 +1,25 @@
+import { OUTLINE_CHANGE_TYPES, type OutlineChangeType } from "./outline-change-summary.js";
+
+// Recognized change types, for validating a hydrated session snapshot (an unknown string from a
+// corrupted snapshot would match no filter toggle).
+const WRITE_LOG_CHANGE_TYPES: ReadonlySet<OutlineChangeType> = new Set(OUTLINE_CHANGE_TYPES);
+
+// Reduce a change-types value to the stored invariant: recognized types only, de-duplicated, in
+// first-seen order. Applied to both freshly recorded changes and hydrated session data so a
+// corrupted/legacy snapshot (or a future stray duplicate) can never leak into the filter.
+function normalizeChangeTypes(value: unknown): OutlineChangeType[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const seen = new Set<OutlineChangeType>();
+  for (const type of value) {
+    if (WRITE_LOG_CHANGE_TYPES.has(type as OutlineChangeType)) {
+      seen.add(type as OutlineChangeType);
+    }
+  }
+  return [...seen];
+}
+
 // An always-on, in-memory record of the persistence "write events" that make up the durability
 // chain -- journal append (durable at ack, invariant I-1) -> snapshot save (folds the journal into
 // the sharded snapshot) -> journal prune (trims the folded entries). Surfaced in the options page
@@ -47,11 +69,13 @@ export type WriteLogDetail = Record<string, WriteLogDetailValue>;
 type StoredDetail = Record<string, string | number | boolean | null>;
 
 // The domain-level change content for a "change" row: a one-line headline plus every affected node
-// name (bounded). Plain strings so it serializes into session storage unchanged.
+// name (bounded), and the discrete categories the change spans (delete/move/rename/...) that drive
+// the options-page per-type filter. Plain strings so it serializes into session storage unchanged.
 export type WriteLogChange = {
   headline: string;
   lines: string[];
   overflow: number;
+  types: OutlineChangeType[];
 };
 
 export type WriteLogEntry = {
@@ -78,6 +102,7 @@ export type WriteLogChangeInput = {
   lines: string[];
   overflow?: number;
   label?: string;
+  types?: OutlineChangeType[];
 };
 
 export type WriteLogSnapshot = {
@@ -181,7 +206,8 @@ export function createWriteLog(
       change: {
         headline: input.headline,
         lines,
-        overflow: Math.max(0, Math.floor(input.overflow ?? 0)) + droppedHere
+        overflow: Math.max(0, Math.floor(input.overflow ?? 0)) + droppedHere,
+        types: normalizeChangeTypes(input.types)
       }
     };
     nextSeq += 1;
@@ -427,7 +453,15 @@ function cloneEntry(entry: WriteLogEntry): WriteLogEntry {
   return {
     ...entry,
     ...(entry.detail ? { detail: { ...entry.detail } } : {}),
-    ...(entry.change ? { change: { ...entry.change, lines: [...entry.change.lines] } } : {})
+    ...(entry.change
+      ? {
+          change: {
+            ...entry.change,
+            lines: [...entry.change.lines],
+            types: [...entry.change.types]
+          }
+        }
+      : {})
   };
 }
 
@@ -478,7 +512,12 @@ function normalizeChange(value: unknown): WriteLogChange | undefined {
   if (!value || typeof value !== "object") {
     return undefined;
   }
-  const candidate = value as { headline?: unknown; lines?: unknown; overflow?: unknown };
+  const candidate = value as {
+    headline?: unknown;
+    lines?: unknown;
+    overflow?: unknown;
+    types?: unknown;
+  };
   if (typeof candidate.headline !== "string" || !Array.isArray(candidate.lines)) {
     return undefined;
   }
@@ -490,10 +529,13 @@ function normalizeChange(value: unknown): WriteLogChange | undefined {
     typeof candidate.overflow === "number" && Number.isFinite(candidate.overflow)
       ? Math.max(0, Math.floor(candidate.overflow))
       : 0;
+  // Change rows written before the `types` field existed (older same-session storage) have no
+  // `types` and default to an empty list (shown unfiltered); junk is dropped (see normalizeChangeTypes).
   return {
     headline: candidate.headline,
     lines,
-    overflow: storedOverflow + (allLines.length - lines.length)
+    overflow: storedOverflow + (allLines.length - lines.length),
+    types: normalizeChangeTypes(candidate.types)
   };
 }
 

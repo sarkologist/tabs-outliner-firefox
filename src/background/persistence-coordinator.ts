@@ -941,6 +941,7 @@ export function createPersistenceCoordinator(deps: PersistenceCoordinatorDeps) {
             headline: item.changeDescription.headline,
             lines: item.changeDescription.lines,
             overflow: item.changeDescription.overflow,
+            types: item.changeDescription.types,
             ...(item.label ? { label: item.label } : {})
           });
         }

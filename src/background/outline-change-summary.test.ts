@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildOutlineChangeDescription,
   describeOutlineDelta,
+  outlineChangeTypes,
   summarizeOutlineDelta
 } from "./outline-change-summary.js";
 import type { OutlineNode, OutlineState } from "../model/types.js";
@@ -406,5 +407,106 @@ describe("summarizeOutlineDelta / describeOutlineDelta", () => {
       { previous, next: state([], []), maxNames: 3 }
     );
     expect(text).toMatch(/\+\d+ more/);
+  });
+});
+
+describe("outlineChangeTypes", () => {
+  it("tags a deletion as 'deleted'", () => {
+    const previous = state([node({ id: "t", title: "Gmail" })], ["t"]);
+    const summary = summarizeOutlineDelta(
+      { deletedNodeIds: ["t"] },
+      { previous, next: state([], []) }
+    );
+    expect(outlineChangeTypes(summary)).toEqual(["deleted"]);
+  });
+
+  it("tags both aspects of a node that moved and was renamed, in headline order", () => {
+    const previous = state(
+      [
+        node({ id: "w", kind: "window", title: "Work" }),
+        node({ id: "h", kind: "window", title: "Home" }),
+        node({ id: "t", parentId: "w", title: "Old" })
+      ],
+      ["w", "h"]
+    );
+    const next = state(
+      [
+        node({ id: "w", kind: "window", title: "Work" }),
+        node({ id: "h", kind: "window", title: "Home" }),
+        node({ id: "t", parentId: "h", title: "Old", customTitle: "New" })
+      ],
+      ["w", "h"]
+    );
+    const summary = summarizeOutlineDelta({ updatedNodes: [next.nodes["t"]!] }, { previous, next });
+    expect(outlineChangeTypes(summary)).toEqual(["moved", "renamed"]);
+  });
+
+  it("tags created nodes as 'added' and a close as 'closed'", () => {
+    const previous = state(
+      [node({ id: "w", kind: "window", title: "Work", status: "live" })],
+      ["w"]
+    );
+    const next = state(
+      [
+        node({ id: "w", kind: "window", title: "Work", status: "closed" }),
+        node({ id: "n", kind: "group", title: "Notes" })
+      ],
+      ["w", "n"]
+    );
+    const summary = summarizeOutlineDelta(
+      { updatedNodes: [next.nodes["w"]!, next.nodes["n"]!], rootIds: ["w", "n"] },
+      { previous, next }
+    );
+    expect(outlineChangeTypes(summary)).toEqual(["added", "closed"]);
+  });
+
+  it("tags an attributed top-level reorder as 'moved'", () => {
+    const win = (id: string, title: string): OutlineNode =>
+      node({ id, kind: "window", title, status: "live" });
+    const previous = state([win("a", "A"), win("b", "B"), win("c", "C")], ["a", "b", "c"]);
+    const next = state([win("a", "A"), win("b", "B"), win("c", "C")], ["a", "c", "b"]);
+    const summary = summarizeOutlineDelta(
+      { rootIds: ["a", "c", "b"] },
+      { previous, next, primaryNodeId: "c", allowGenericReorder: true }
+    );
+    expect(outlineChangeTypes(summary)).toEqual(["moved"]);
+  });
+
+  it("tags a bulk delta past the detail limit as deleted + other", () => {
+    const updatedNodes = Array.from({ length: 300 }, (_unused, index) =>
+      node({ id: `n${index}`, title: `N${index}` })
+    );
+    const next = state(
+      updatedNodes,
+      updatedNodes.map((entry) => entry.id)
+    );
+    const summary = summarizeOutlineDelta({ updatedNodes, deletedNodeIds: ["x", "y"] }, { next });
+    expect(outlineChangeTypes(summary)).toEqual(["deleted", "other"]);
+  });
+
+  it("tags a reopen as 'restored'", () => {
+    const previous = state(
+      [node({ id: "w", kind: "window", title: "Work", status: "closed" })],
+      ["w"]
+    );
+    const next = state([node({ id: "w", kind: "window", title: "Work", status: "live" })], ["w"]);
+    const summary = summarizeOutlineDelta({ updatedNodes: [next.nodes["w"]!] }, { previous, next });
+    expect(outlineChangeTypes(summary)).toEqual(["restored"]);
+  });
+
+  it("tags an unclassifiable update (no previous state) as 'other'", () => {
+    const next = state([node({ id: "t", title: "Gmail" })], ["t"]);
+    const summary = summarizeOutlineDelta({ updatedNodes: [next.nodes["t"]!] }, { next });
+    expect(summary.updated.length).toBeGreaterThan(0);
+    expect(outlineChangeTypes(summary)).toEqual(["other"]);
+  });
+
+  it("includes the types on the built change description", () => {
+    const previous = state([node({ id: "t", title: "Gmail" })], ["t"]);
+    const description = buildOutlineChangeDescription(
+      { deletedNodeIds: ["t"] },
+      { previous, next: state([], []) }
+    );
+    expect(description?.types).toEqual(["deleted"]);
   });
 });
