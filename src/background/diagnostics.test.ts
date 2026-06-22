@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { computeDiagnostics } from "./diagnostics.js";
+import {
+  computeDiagnostics,
+  serializeMissingRuntimeTabsForIncidentLog,
+  MISSING_RUNTIME_TAB_LOG_LIMIT,
+  type MissingRuntimeTab
+} from "./diagnostics.js";
 import { bootstrapFromWindows, moveNode } from "../model/outline.js";
 import type { RuntimeWindow } from "../model/types.js";
 
@@ -57,7 +62,13 @@ describe("diagnostics", () => {
       visibleLiveTabNodeCount: 2,
       closedTabNodeCount: 0,
       hiddenLiveTabNodeCount: 0,
-      missingRuntimeTabIds: [3]
+      missingRuntimeTabIds: [3],
+      // The unmatched tab carries its window/url/title so a "missing N" is identifiable
+      // after the fact (the readout is volatile; the coordinator logs these to the
+      // incident log, which a profile export captures).
+      missingRuntimeTabs: [
+        { id: 3, windowId: 10, url: "https://missing.example/", title: "Missing" }
+      ]
     });
   });
 
@@ -77,7 +88,44 @@ describe("diagnostics", () => {
       visibleLiveTabNodeCount: 1,
       closedTabNodeCount: 0,
       hiddenLiveTabNodeCount: 2,
-      missingRuntimeTabIds: []
+      missingRuntimeTabIds: [],
+      missingRuntimeTabs: []
     });
+  });
+});
+
+describe("serializeMissingRuntimeTabsForIncidentLog", () => {
+  it("serializes each tab's id/window/url/title to a JSON string", () => {
+    const missing: MissingRuntimeTab[] = [
+      { id: 7, windowId: 3, url: "https://a.example/", title: "A" },
+      { id: 9, windowId: 3 }
+    ];
+
+    expect(JSON.parse(serializeMissingRuntimeTabsForIncidentLog(missing))).toEqual([
+      { id: 7, windowId: 3, url: "https://a.example/", title: "A" },
+      { id: 9, windowId: 3 }
+    ]);
+  });
+
+  it("caps the number of serialized tabs (true total stays in the separate missingCount)", () => {
+    const missing: MissingRuntimeTab[] = Array.from(
+      { length: MISSING_RUNTIME_TAB_LOG_LIMIT + 5 },
+      (_unused, index) => ({ id: index + 1, windowId: 1 })
+    );
+
+    expect(JSON.parse(serializeMissingRuntimeTabsForIncidentLog(missing))).toHaveLength(
+      MISSING_RUNTIME_TAB_LOG_LIMIT
+    );
+  });
+
+  it("truncates an oversized url/title and marks it with an ellipsis", () => {
+    const longUrl = `https://example.com/${"x".repeat(1000)}`;
+    const [entry] = JSON.parse(
+      serializeMissingRuntimeTabsForIncidentLog([{ id: 1, windowId: 1, url: longUrl, title: "ok" }])
+    ) as Array<{ url: string; title: string }>;
+
+    expect(entry!.url.length).toBeLessThan(longUrl.length);
+    expect(entry!.url.endsWith("…")).toBe(true);
+    expect(entry!.title).toBe("ok");
   });
 });

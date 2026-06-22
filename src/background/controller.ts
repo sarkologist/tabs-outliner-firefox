@@ -4,6 +4,7 @@ import { createBrowserAdapter } from "./browser-adapter.js";
 import { createSidebarBroadcaster } from "./sidebar-broadcaster.js";
 import { createMutationScheduler } from "./mutation-scheduler.js";
 import { createDiagnosticsCoordinator } from "./diagnostics-coordinator.js";
+import { serializeMissingRuntimeTabsForIncidentLog } from "./diagnostics.js";
 import { createStorageMaintenanceCoordinator } from "./storage-maintenance-coordinator.js";
 import { createBackupCoordinator } from "./backup-coordinator.js";
 import { createHistoryLoader } from "./history-loader.js";
@@ -507,7 +508,19 @@ export function createBackgroundController(
     ensureState,
     waitForSchedulerIdle,
     isHighPrioritySchedulerIdle,
-    excludeWindowIds: () => fullSizeOutlinerWindowIds
+    excludeWindowIds: () => fullSizeOutlinerWindowIds,
+    // Persist the "missing N" detail (live Firefox tabs with no live outline node) into the
+    // incident log so it survives in a profile export — the live readout shows only ids/count.
+    // Incident detail is flat primitives, so the per-tab list rides as a (bounded) JSON string
+    // while missingCount records the true total. The coordinator throttles the calls.
+    recordMissingRuntimeTabs: (missing, summary) => {
+      void recordIncidentLog("missingRuntimeTab", {
+        runtimeTabCount: summary.runtimeTabCount,
+        liveTabNodeCount: summary.liveTabNodeCount,
+        missingCount: missing.length,
+        missing: serializeMissingRuntimeTabsForIncidentLog(missing)
+      });
+    }
   });
 
   const storageMaintenance = createStorageMaintenanceCoordinator({
