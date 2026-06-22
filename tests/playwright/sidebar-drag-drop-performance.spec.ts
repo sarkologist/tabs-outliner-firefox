@@ -543,7 +543,7 @@ async function loadLargeSidebar(page: Page, tabCount: number): Promise<void> {
                       structuredClone(node)
                     ],
                     rootIds: [...state.rootIds],
-                    deletedClosedCount: 0
+                    deletedLiveTabCount: 0
                   };
             for (const listener of listeners) {
               listener(structuredClone(update));
@@ -575,7 +575,7 @@ async function loadLargeSidebar(page: Page, tabCount: number): Promise<void> {
   }, tabCount);
 
   await page.goto("/sidebar/sidebar.html");
-  await expect(page.locator("#state-count")).toHaveText(`${tabCount + 1} items / 0 saved`, {
+  await expect(page.locator("#state-count")).toHaveText(`${tabCount + 1} / ${tabCount}`, {
     timeout: 60_000
   });
   await expect(page.locator(nodeRowSelector("tab:40"))).toBeVisible();

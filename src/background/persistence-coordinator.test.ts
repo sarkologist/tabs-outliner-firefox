@@ -109,7 +109,7 @@ describe("persistence coordinator write-activity safety", () => {
         type: "treeStructureUpdated",
         updatedNodes: [],
         deletedNodeIds: ["tab:1"],
-        deletedClosedCount: 0,
+        deletedLiveTabCount: 0,
         rootIds: []
       },
       "runtimeFastPath",

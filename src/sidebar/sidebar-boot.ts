@@ -60,8 +60,11 @@ function renderInitialSnapshot(snapshot: InitialTreeSnapshot): void {
   tree.append(fragment);
 
   if (stateCount) {
-    stateCount.textContent = `${snapshot.projection.nodeCount} items / ${snapshot.projection.closedCount} saved`;
-    stateCount.title = snapshot.hydrating ? "Using sparse background-backed tree" : "";
+    const { nodeCount, liveTabCount } = snapshot.projection;
+    // Numbers only (e.g. "20964 / 48"); the explanatory words live in the hover tooltip. Boot avoids
+    // importing the shared pluralize() helper to keep the first-paint chunk small.
+    stateCount.textContent = `${nodeCount} / ${liveTabCount}`;
+    stateCount.title = `${nodeCount} ${nodeCount === 1 ? "item" : "items"} · ${liveTabCount} open ${liveTabCount === 1 ? "tab" : "tabs"}`;
   }
   if (empty) {
     empty.hidden = snapshot.projection.rows.length > 0;

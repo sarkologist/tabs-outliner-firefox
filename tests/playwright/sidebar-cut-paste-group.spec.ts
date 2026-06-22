@@ -183,7 +183,7 @@ async function loadSidebar(page: Page): Promise<void> {
         deletedNodeIds,
         updatedNodes,
         rootIds: [...next.rootIds],
-        deletedClosedCount: 0
+        deletedLiveTabCount: 0
       };
     }
 

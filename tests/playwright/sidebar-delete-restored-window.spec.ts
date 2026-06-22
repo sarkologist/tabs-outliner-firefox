@@ -160,7 +160,7 @@ async function loadSidebar(
           deletedNodeIds,
           updatedNodes,
           rootIds: [...next.rootIds],
-          deletedClosedCount: 0
+          deletedLiveTabCount: 0
         };
       }
 
@@ -243,7 +243,7 @@ async function loadSidebar(
             activeTabRowIndex: 3,
             totalRowCount: 6,
             nodeCount: 6,
-            closedCount: 0,
+            liveTabCount: 0,
             matchCount: 0
           },
           coverage: {

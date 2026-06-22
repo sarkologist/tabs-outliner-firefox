@@ -13,7 +13,7 @@ export type TreeStructureUpdate = {
   deletedNodeIds: NodeId[];
   updatedNodes: OutlineNode[];
   rootIds: NodeId[];
-  deletedClosedCount: number;
+  deletedLiveTabCount: number;
 };
 
 export type SameParentReorderUpdate = {
@@ -28,7 +28,7 @@ export type SameParentReorderUpdate = {
 export type NodeStateUpdate = {
   type: "nodeStateUpdated";
   updatedNodes: OutlineNode[];
-  closedCountDelta: number;
+  liveTabCountDelta: number;
 };
 
 export type ExportTreeResponse = {
@@ -128,7 +128,7 @@ export function isNodeStateUpdated(message: unknown): message is NodeStateUpdate
         Array.isArray((node as { childIds?: unknown }).childIds)
       )
     ) &&
-    typeof (message as { closedCountDelta?: unknown }).closedCountDelta === "number"
+    typeof (message as { liveTabCountDelta?: unknown }).liveTabCountDelta === "number"
   );
 }
 
@@ -152,7 +152,7 @@ export function isTreeStructureUpdated(message: unknown): message is TreeStructu
     ) &&
     Array.isArray((message as { rootIds?: unknown }).rootIds) &&
     (message as { rootIds: unknown[] }).rootIds.every((nodeId) => typeof nodeId === "string") &&
-    typeof (message as { deletedClosedCount?: unknown }).deletedClosedCount === "number"
+    typeof (message as { deletedLiveTabCount?: unknown }).deletedLiveTabCount === "number"
   );
 }
 

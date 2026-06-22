@@ -128,7 +128,7 @@ test.describe("sidebar active-tab scrolling", () => {
           active: false
         }
       ],
-      closedCountDelta: 0
+      liveTabCountDelta: 0
     });
 
     await expect(page.locator(nodeSelector("tab:new-active"))).toBeVisible();
@@ -241,7 +241,14 @@ async function loadSidebar(
     options.fullSizeView ? "/sidebar/sidebar.html?view=window" : "/sidebar/sidebar.html"
   );
   await expect(page.locator("#state-count")).toHaveText(
-    `${Object.keys(state.nodes).length} items / 0 saved`
+    `${Object.keys(state.nodes).length} / ${
+      Object.values(state.nodes).filter(
+        (node) =>
+          node.kind === "tab" &&
+          node.status === "live" &&
+          Boolean(node.live && "tabId" in node.live)
+      ).length
+    }`
   );
 }
 
@@ -507,6 +514,6 @@ function moveScopedWindowToTopLevelPatch(state: SidebarFixtureState) {
       topLevelScopedWindow
     ],
     rootIds: ["window:global", "group:container", "window:42"],
-    deletedClosedCount: 0
+    deletedLiveTabCount: 0
   };
 }

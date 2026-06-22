@@ -537,7 +537,7 @@ test.describe("sidebar startup interaction profile", () => {
                     listener({
                       type: "nodeStateUpdated",
                       updatedNodes: [node],
-                      closedCountDelta: 1
+                      liveTabCountDelta: -1
                     });
                   }
                 }, 0);
@@ -811,7 +811,7 @@ function fixtureActiveCenteredSnapshot(tabCount: number, activeTabId: number) {
       activeTabRowIndex: activeTabId,
       totalRowCount: tabCount + 1,
       nodeCount: tabCount + 1,
-      closedCount: 0,
+      liveTabCount: 0,
       matchCount: 0
     },
     coverage

@@ -894,7 +894,7 @@ function applySparseScrollWindowSnapshot(
   const nextProjection = projectionFromInitialTreeSnapshot(snapshot);
   if (!nextProjection.isSearchActive && options.countMode !== "snapshot") {
     nextProjection.nodeCount = currentProjection.nodeCount;
-    nextProjection.closedCount = currentProjection.closedCount;
+    nextProjection.liveTabCount = currentProjection.liveTabCount;
     nextProjection.matchCount = currentProjection.matchCount;
   }
   currentProjection = nextProjection;
@@ -1718,20 +1718,27 @@ function registerToolbarOverflowControls(): void {
     }
   });
 
-  document.addEventListener("click", (event) => {
-    if (!toolbarOverflowMenu || toolbarOverflowMenu.hidden) {
-      return;
-    }
-    const target = event.target;
-    if (!(target instanceof Node)) {
+  // Capture phase so an outside click still dismisses the menu even when a descendant handler stops
+  // the event from bubbling to document -- e.g. a tree row's button[data-action], whose handleTreeClick
+  // calls stopPropagation(). With a bubble-phase listener those clicks left the menu stuck open.
+  document.addEventListener(
+    "click",
+    (event) => {
+      if (!toolbarOverflowMenu || toolbarOverflowMenu.hidden) {
+        return;
+      }
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        closeToolbarOverflowMenu();
+        return;
+      }
+      if (toolbarOverflow?.contains(target) || toolbarOverflowMenu.contains(target)) {
+        return;
+      }
       closeToolbarOverflowMenu();
-      return;
-    }
-    if (toolbarOverflow?.contains(target) || toolbarOverflowMenu.contains(target)) {
-      return;
-    }
-    closeToolbarOverflowMenu();
-  });
+    },
+    { capture: true }
+  );
 
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape" || !toolbarOverflowMenu || toolbarOverflowMenu.hidden) {
@@ -2057,9 +2064,9 @@ function refreshPartialSearchProjectionAfterNodeStateUpdate(update: NodeStateUpd
   const localProjection = buildVisibleTreeProjection(currentState, currentSearchQuery);
   const matchingNodeIds = updatedSearchMatchingNodeIds(previousProjection, update);
   localProjection.nodeCount = previousProjection.nodeCount;
-  localProjection.closedCount = Math.max(
+  localProjection.liveTabCount = Math.max(
     0,
-    previousProjection.closedCount + update.closedCountDelta
+    previousProjection.liveTabCount + update.liveTabCountDelta
   );
   localProjection.matchingNodeIds = matchingNodeIds;
   localProjection.matchCount = matchingNodeIds.size;
@@ -2382,10 +2389,15 @@ function revealSidebar(): void {
 
 function updateProjectionChrome(projection: VisibleTreeProjection): void {
   if (stateCount) {
-    stateCount.textContent = projection.isSearchActive
-      ? `${projection.matchCount} ${pluralize(projection.matchCount, "match")} / ${projection.nodeCount} items`
-      : `${projection.nodeCount} items / ${projection.closedCount} saved`;
-    stateCount.title = hydratingFullState ? "Using sparse background-backed tree" : "";
+    // Show just the numbers (e.g. "20964 / 48"); the words live in the hover tooltip. In search the
+    // pair is matches / items; otherwise it is total items / open tabs.
+    if (projection.isSearchActive) {
+      stateCount.textContent = `${projection.matchCount} / ${projection.nodeCount}`;
+      stateCount.title = `${projection.matchCount} ${pluralize(projection.matchCount, "match")} · ${projection.nodeCount} ${pluralize(projection.nodeCount, "item")}`;
+    } else {
+      stateCount.textContent = `${projection.nodeCount} / ${projection.liveTabCount}`;
+      stateCount.title = `${projection.nodeCount} ${pluralize(projection.nodeCount, "item")} · ${projection.liveTabCount} open ${pluralize(projection.liveTabCount, "tab")}`;
+    }
   }
 
   if (empty) {
@@ -2412,7 +2424,7 @@ function projectionFromInitialTreeSnapshot(snapshot: InitialTreeSnapshot): Visib
       : {}),
     totalRowCount: snapshot.projection.totalRowCount,
     nodeCount: snapshot.projection.nodeCount,
-    closedCount: snapshot.projection.closedCount,
+    liveTabCount: snapshot.projection.liveTabCount,
     matchCount: snapshot.projection.matchCount
   };
 }
@@ -2523,7 +2535,7 @@ function cloneVisibleTreeProjection(projection: VisibleTreeProjection): VisibleT
       ? { totalRowCount: projection.totalRowCount }
       : {}),
     nodeCount: projection.nodeCount,
-    closedCount: projection.closedCount,
+    liveTabCount: projection.liveTabCount,
     matchCount: projection.matchCount
   };
 }
@@ -2942,9 +2954,9 @@ function applyNodeStateUpdate(update: NodeStateUpdate): void {
       refreshProjectionActiveWindowFlags(state, currentProjection);
     }
     refreshProjectionActiveTabTarget(state, currentProjection);
-    currentProjection.closedCount = Math.max(
+    currentProjection.liveTabCount = Math.max(
       0,
-      currentProjection.closedCount + update.closedCountDelta
+      currentProjection.liveTabCount + update.liveTabCountDelta
     );
 
     for (const row of currentProjection.rows) {
@@ -3195,7 +3207,7 @@ function applySameParentReorderUpdate(update: SameParentReorderUpdate): void {
         : { ...movedNode, parentId: update.parentId }
     ],
     rootIds: [...update.rootIds],
-    deletedClosedCount: 0
+    deletedLiveTabCount: 0
   });
 }
 
