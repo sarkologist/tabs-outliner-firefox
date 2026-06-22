@@ -1718,20 +1718,27 @@ function registerToolbarOverflowControls(): void {
     }
   });
 
-  document.addEventListener("click", (event) => {
-    if (!toolbarOverflowMenu || toolbarOverflowMenu.hidden) {
-      return;
-    }
-    const target = event.target;
-    if (!(target instanceof Node)) {
+  // Capture phase so an outside click still dismisses the menu even when a descendant handler stops
+  // the event from bubbling to document -- e.g. a tree row's button[data-action], whose handleTreeClick
+  // calls stopPropagation(). With a bubble-phase listener those clicks left the menu stuck open.
+  document.addEventListener(
+    "click",
+    (event) => {
+      if (!toolbarOverflowMenu || toolbarOverflowMenu.hidden) {
+        return;
+      }
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        closeToolbarOverflowMenu();
+        return;
+      }
+      if (toolbarOverflow?.contains(target) || toolbarOverflowMenu.contains(target)) {
+        return;
+      }
       closeToolbarOverflowMenu();
-      return;
-    }
-    if (toolbarOverflow?.contains(target) || toolbarOverflowMenu.contains(target)) {
-      return;
-    }
-    closeToolbarOverflowMenu();
-  });
+    },
+    { capture: true }
+  );
 
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape" || !toolbarOverflowMenu || toolbarOverflowMenu.hidden) {

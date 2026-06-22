@@ -201,6 +201,33 @@ test.describe("sidebar/runtime integration", () => {
     expect(second.issues).toEqual([]);
     await secondPage.close();
   });
+
+  test("dismisses the more-actions menu when clicking elsewhere", async ({ page }) => {
+    const harness = createHarness(runtimeFixture(1, ["Alpha", "Beta"]));
+    const sidebar = await loadSidebar(harness, page);
+
+    const overflowButton = page.getByRole("button", { name: "More actions" });
+    const menu = page.locator("#toolbar-overflow-menu");
+
+    await overflowButton.click();
+    await expect(menu).toBeVisible();
+    await expect(overflowButton).toHaveAttribute("aria-expanded", "true");
+
+    // A tree row's label is a button[data-action], whose handleTreeClick stops the click from
+    // bubbling to document -- this used to leave the overflow menu stuck open. It must dismiss it.
+    // Click the label's left edge so the right-aligned menu doesn't intercept the pointer.
+    await page.locator(`${nodeSelector("tab:1")} .node-label`).click({ position: { x: 4, y: 4 } });
+    await expect(menu).toBeHidden();
+    await expect(overflowButton).toHaveAttribute("aria-expanded", "false");
+
+    // Re-opens cleanly and Escape still dismisses.
+    await overflowButton.click();
+    await expect(menu).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(menu).toBeHidden();
+
+    expect(sidebar.issues).toEqual([]);
+  });
 });
 
 async function loadSidebar(
