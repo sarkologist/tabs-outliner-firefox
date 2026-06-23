@@ -177,6 +177,11 @@ let sidebarWindowFocusListenerRegistered = false;
 let sidebarActiveTabTargetsRevision = 0;
 let sidebarActiveTabTargetsCacheRevision = -1;
 let sidebarActiveTabTargetsByWindow = new Map<number, NodeId>();
+// Set when THIS sidebar issues a relocation command (move-to-bottom/top, drag) that carries the
+// active scroll node, so the resulting broadcast scrolls the view to follow it to its new -- often
+// off-screen, sparse-unloaded -- location. Only the initiator follows; passive sidebars receiving
+// the same broadcast keep their scroll position (they did not ask to go anywhere). Consumed once.
+let pendingMoveFollowNodeId: NodeId | undefined;
 let sparseWindowRequestSequence = 0;
 let sparseWindowStateChangeCutoff = 0;
 let remoteSearchRequestSequence = 0;
@@ -3065,7 +3070,18 @@ function applyTreeStructureUpdate(update: TreeStructureUpdate): void {
       } else {
         refreshLastOutlineProjectionAfterTreeStructureUpdate(state, update);
       }
-      const activeRevealNodeId = activeRevealNodeIdForTreeStructureUpdate(state, update);
+      // A relocation this sidebar initiated for the active node's subtree follows the active node
+      // to its new location -- even when the moved node is the active tab's ANCESTOR (e.g. "Move to
+      // bottom" on the active window), so the tab itself is absent from updatedNodes and a sparse
+      // projection never loaded its new slot. (`shouldRescrollActiveTab` confirms the move actually
+      // touched the active node; the pending flag confirms WE asked, so passive sidebars don't jump.)
+      const initiatedActiveFollow = pendingMoveFollowNodeId !== undefined;
+      pendingMoveFollowNodeId = undefined;
+      const activeRevealNodeId =
+        activeRevealNodeIdForTreeStructureUpdate(state, update) ??
+        (initiatedActiveFollow && shouldRescrollActiveTab
+          ? activeScrollNodeIdFromState(state)
+          : undefined);
       if (currentProjectionOwner.kind === "showInTree" && pendingShowInTreeNodeId) {
         return;
       }
@@ -5497,9 +5513,18 @@ function removeDropPreviewElements(): void {
 }
 
 async function runAndRender(command: BackgroundCommand): Promise<boolean> {
+  noteRelocationCommandForActiveFollow(command);
   try {
     const response = await sendCommand(command);
     if (isCommandAck(response)) {
+      // A no-op command (stateChanged === false, e.g. a drag that drops a node back in its own slot)
+      // broadcasts nothing, so no treeStructureUpdated will arrive to consume a pending move-follow.
+      // Drop it now so a later unrelated patch cannot inherit the stale follow. A real mutation keeps
+      // it; its broadcast consumes it in applyTreeStructureUpdate. (Clearing only on the no-op ack is
+      // ordering-independent: it never races the real-move broadcast, which carries stateChanged.)
+      if (!response.stateChanged) {
+        pendingMoveFollowNodeId = undefined;
+      }
       return true;
     }
     if (isOutlineState(response)) {
@@ -5513,9 +5538,51 @@ async function runAndRender(command: BackgroundCommand): Promise<boolean> {
     }
     return true;
   } catch (error) {
+    // No broadcast will arrive to consume the pending follow; drop it so a later unrelated patch
+    // cannot wrongly inherit it.
+    pendingMoveFollowNodeId = undefined;
     diagnosticsNotice.show(commandErrorText(error), { error: true });
     return false;
   }
+}
+
+// Relocation commands that move a whole subtree to a new place in the outline. When one of these
+// carries the active scroll node, the initiating sidebar should follow it to its destination.
+const ACTIVE_FOLLOW_RELOCATION_COMMAND_TYPES = new Set<BackgroundCommand["type"]>([
+  "moveNode",
+  "moveNodeToNewWindow",
+  "moveSubtreeToTopLevel",
+  "moveSubtreeToBottomTopLevel"
+]);
+
+function noteRelocationCommandForActiveFollow(command: BackgroundCommand): void {
+  if (
+    !ACTIVE_FOLLOW_RELOCATION_COMMAND_TYPES.has(command.type) ||
+    !("nodeId" in command) ||
+    !activeScrollNodeIsWithinSubtree(command.nodeId)
+  ) {
+    return;
+  }
+  pendingMoveFollowNodeId = command.nodeId;
+}
+
+// True when the active scroll node is the given subtree root or a descendant of it -- i.e. moving
+// that subtree carries the active node along with it.
+function activeScrollNodeIsWithinSubtree(rootId: NodeId): boolean {
+  const state = currentState;
+  if (!state) {
+    return false;
+  }
+  const visited = new Set<NodeId>();
+  let currentId: NodeId | undefined = activeScrollNodeIdFromState(state);
+  while (currentId && !visited.has(currentId)) {
+    if (currentId === rootId) {
+      return true;
+    }
+    visited.add(currentId);
+    currentId = state.nodes[currentId]?.parentId;
+  }
+  return false;
 }
 
 // Deleting a closed subtree is, on disk, an O(total-store) storage write on Firefox (~0.5-1.9s on a
